@@ -18,6 +18,8 @@ export default function RootLayout() {
         <Stack.Screen name="history-detail" options={{ headerShown: false }} />
         <Stack.Screen name="library-detail" options={{ headerShown: false }} />
         <Stack.Screen name="profile" options={{ headerShown: false, presentation: 'modal' }} />
+        <Stack.Screen name="settings" options={{ headerShown: false, presentation: 'modal' }} />
+        <Stack.Screen name="plan-preview" options={{ headerShown: false, presentation: 'modal' }} />
       </Stack>
       <StatusBar style="light" />
     </>

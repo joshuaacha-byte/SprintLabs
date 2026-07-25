@@ -263,7 +263,7 @@ function StrengthExercise({ exercise, result, update, onRemove }: { exercise: Pl
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: palette.bg }, shell: { flex: 1, padding: 16, gap: 10 },
+  safe: { flex: 1, backgroundColor: palette.bg }, shell: { flex: 1, padding: 16, gap: 10, width: '100%', maxWidth: 900, alignSelf: 'center' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }, timerLabel: { color: palette.accent, fontSize: 10, fontWeight: '900', letterSpacing: 1.1 }, timer: { color: palette.text, fontSize: 34, lineHeight: 39, fontWeight: '900', fontVariant: ['tabular-nums'] }, title: { color: palette.muted, fontSize: 14, fontWeight: '800', marginTop: 2 }, close: { width: 44, height: 44, borderRadius: 14, backgroundColor: palette.surface2, alignItems: 'center', justifyContent: 'center' },
   progressRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 }, progressText: { color: palette.muted, fontSize: 11, fontWeight: '800' }, track: { height: 5, borderRadius: 3, backgroundColor: palette.surface2, overflow: 'hidden' }, fill: { height: 5, backgroundColor: palette.accent },
   content: { gap: 15, paddingBottom: 12 }, snapshotNotice: { flexDirection: 'row', gap: 10, alignItems: 'center', borderStyle: 'dashed' }, snapshotTitle: { color: palette.text, fontSize: 13, fontWeight: '900' }, snapshotCopy: { color: palette.muted, fontSize: 11, lineHeight: 16, marginTop: 2 }, sectionWrap: { gap: 10 }, sectionTitle: { color: palette.text, fontSize: 19, fontWeight: '900' },

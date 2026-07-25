@@ -12,7 +12,7 @@ export function OnboardingProgress({ step, total, onBack }: { step: number; tota
 
 export type SplitPose = 'welcome' | 'listening' | 'focused' | 'calm' | 'celebration';
 
-const splitImages: Record<SplitPose, ImageSourcePropType> = {
+export const splitImages: Record<SplitPose, ImageSourcePropType> = {
   welcome: require('@/assets/images/onboarding/split-welcome.png'),
   listening: require('@/assets/images/onboarding/split-listening.png'),
   focused: require('@/assets/images/onboarding/split-focused.png'),
@@ -58,7 +58,7 @@ export function CommitmentHoldButton({ onComplete }: { onComplete: () => void })
 export function ProfileRevealCard({ title, children }: PropsWithChildren<{ title: string }>) { return <View style={styles.reveal}><Text style={styles.revealTitle}>{title}</Text>{children}</View>; }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: palette.bg }, page: { padding: 20, paddingBottom: 42, gap: 18, flexGrow: 1 },
+  safe: { flex: 1, backgroundColor: palette.bg }, page: { padding: 20, paddingBottom: 42, gap: 18, flexGrow: 1, width: '100%', maxWidth: 760, alignSelf: 'center' },
   progressRow: { flexDirection: 'row', alignItems: 'center', gap: 11 }, back: { height: 40, width: 40, borderRadius: 20, backgroundColor: palette.surface2, alignItems: 'center', justifyContent: 'center' }, backSpacer: { width: 40 }, backText: { color: palette.text, fontSize: 32, lineHeight: 35, marginTop: -4 }, track: { height: 7, borderRadius: 4, backgroundColor: palette.surface2, flex: 1, overflow: 'hidden' }, fill: { height: '100%', borderRadius: 4, backgroundColor: palette.accent }, stepText: { color: palette.muted, fontWeight: '800', fontSize: 11, width: 32, textAlign: 'right' },
   guide: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 126 }, guideProminent: { flexDirection: 'column', justifyContent: 'center', minHeight: 282 }, split: { width: 116, height: 116 }, splitProminent: { width: 205, height: 205 }, bubble: { flex: 1, backgroundColor: palette.surface, borderColor: palette.border, borderWidth: 1, borderRadius: 16, paddingVertical: 13, paddingHorizontal: 15 }, bubbleText: { color: palette.text, fontWeight: '700', lineHeight: 20, fontSize: 14 },
   selectable: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 15, borderRadius: 16, backgroundColor: palette.surface, borderColor: palette.border, borderWidth: 1 }, selectableSelected: { borderColor: palette.accent, backgroundColor: '#18210B' }, selectableLabel: { color: palette.text, fontWeight: '900', fontSize: 15 }, selectableLabelSelected: { color: palette.accent }, selectableDetail: { color: palette.muted, marginTop: 3, fontSize: 12, lineHeight: 17 }, radio: { height: 23, width: 23, borderRadius: 12, borderWidth: 2, borderColor: palette.border, alignItems: 'center', justifyContent: 'center' }, radioSelected: { borderColor: palette.accent }, radioDot: { width: 11, height: 11, borderRadius: 6, backgroundColor: palette.accent }, checkbox: { height: 23, width: 23, borderRadius: 6, borderWidth: 2, borderColor: palette.border, alignItems: 'center', justifyContent: 'center' }, checkboxSelected: { borderColor: palette.accent, backgroundColor: palette.accent }, checkmark: { color: palette.bg, fontWeight: '900', fontSize: 16, lineHeight: 18 },

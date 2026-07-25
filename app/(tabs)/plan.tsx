@@ -5,19 +5,22 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { Card, Eyebrow, ScreenTitle } from '@/components/sprint-ui';
 import { palette } from '@/constants/sprintlab';
 import { defaultWeekSchedule } from '@/data/workouts';
-import { ScheduledDay, WeekdayIndex } from '@/types';
+import { AthleteProfile, ScheduledDay, WeekdayIndex } from '@/types';
+import { getAthleteProfile } from '@/utils/athlete-profile';
 import { getWeekSchedule, markDayAsRest, swapScheduledDays } from '@/utils/storage';
 
 export default function PlanScreen() {
   const router = useRouter();
   const todayIndex = new Date().getDay() as WeekdayIndex;
   const [schedule, setSchedule] = useState<ScheduledDay[]>(defaultWeekSchedule);
+  const [athlete, setAthlete] = useState<AthleteProfile | null>(null);
   const [selected, setSelected] = useState<WeekdayIndex>(todayIndex);
   const [choosingMoveTarget, setChoosingMoveTarget] = useState(false);
 
   const loadSchedule = useCallback(() => getWeekSchedule().then(setSchedule), []);
   useFocusEffect(useCallback(() => {
     loadSchedule();
+    void getAthleteProfile().then(setAthlete);
   }, [loadSchedule]));
 
   const trainingDays = schedule.filter(day => day.kind === 'workout').length;
@@ -41,6 +44,16 @@ export default function PlanScreen() {
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.page}>
     <Eyebrow>Recurring weekly schedule</Eyebrow>
     <ScreenTitle subtitle="Each weekday has its own workout or rest day. Today follows this schedule automatically.">My training week</ScreenTitle>
+    <Card style={styles.suggestionCard}>
+      <View style={styles.suggestionHead}>
+        <View style={styles.suggestionIcon}><MaterialIcons name={athlete?.trainingPlanMode === 'log-coach-plan' ? 'shield' : 'auto-awesome'} size={21} color={palette.accent} /></View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.suggestionTitle}>{athlete?.trainingPlanMode === 'log-coach-plan' ? 'Coach plan protected' : 'Build from your speed profile'}</Text>
+          <Text style={styles.suggestionCopy}>{athlete?.trainingPlanMode === 'log-coach-plan' ? 'SprintLab will not replace your coach’s plan. Keep editing the schedule manually.' : 'Preview a deterministic week selected only from Approved track workouts.'}</Text>
+        </View>
+      </View>
+      {athlete?.trainingPlanMode !== 'log-coach-plan' ? <Pressable onPress={() => router.push('/plan-preview')} style={styles.previewButton}><Text style={styles.previewButtonText}>Preview suggested week</Text><MaterialIcons name="arrow-forward" size={18} color={palette.accent} /></Pressable> : null}
+    </Card>
     <View style={styles.summary}>
       <View><Text style={styles.big}>{trainingDays}</Text><Text style={styles.small}>training days</Text></View>
       <View><Text style={styles.big}>{restDays}</Text><Text style={styles.small}>rest days</Text></View>
@@ -94,7 +107,14 @@ export default function PlanScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.bg },
-  page: { padding: 20, paddingBottom: 36, gap: 14 },
+  page: { padding: 20, paddingBottom: 36, gap: 14, width: '100%', maxWidth: 820, alignSelf: 'center' },
+  suggestionCard: { gap: 13, borderColor: '#405020' },
+  suggestionHead: { flexDirection: 'row', alignItems: 'center', gap: 11 },
+  suggestionIcon: { width: 42, height: 42, borderRadius: 13, backgroundColor: palette.accentDark, alignItems: 'center', justifyContent: 'center' },
+  suggestionTitle: { color: palette.text, fontSize: 15, fontWeight: '900' },
+  suggestionCopy: { color: palette.muted, fontSize: 11, lineHeight: 16, marginTop: 3 },
+  previewButton: { minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: palette.border, paddingTop: 10 },
+  previewButtonText: { color: palette.accent, fontSize: 12, fontWeight: '900' },
   summary: { flexDirection: 'row', gap: 12, paddingVertical: 4 },
   big: { color: palette.accent, fontSize: 27, fontWeight: '900' },
   small: { color: palette.muted, fontSize: 12, marginTop: 2 },

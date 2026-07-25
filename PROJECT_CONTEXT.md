@@ -1,6 +1,6 @@
 # SprintLab Project Context and Handoff
 
-Last updated: July 24, 2026
+Last updated: July 25, 2026
 
 Read this document before making product or code changes. It preserves the decisions, goals, completed work, known issues, and next steps from the original planning and prototype sessions.
 
@@ -238,8 +238,25 @@ The Stage 1 clickable prototype exists in `/Users/joshuaacha/Desktop/sprintlab`.
 - The final review no longer asks for body weight every session. Existing historical records remain readable.
 - Track rep timing says it is optional; marking a rep Done is enough. Adding work names the relevant section and offers section-specific suggestions or a custom entry.
 - Seed speed workouts now expose meaningful target intensity ranges in their session details and structured tracking values.
-- Profile contains a development-only, confirmation-gated **Erase all local app data** action for testing. It removes only AsyncStorage keys beginning with `sprintlab.`: local profile/draft, plans, active/completed sessions, history, progress summaries, library edits, and logs.
+- Profile & Settings contains a development-only, confirmation-gated **Erase all local app data** action for testing. It removes only AsyncStorage keys beginning with `sprintlab.`: local profile/draft, plans, active/completed sessions, history, progress summaries, library edits, and logs.
 - Archive and restore explain their lifecycle behavior; archiving removes an item from normal selection, while restoring returns it as a Draft requiring review.
+
+### Deterministic track plan selector and Settings pass (July 25)
+
+- The Today avatar now opens a real **Profile & Settings** screen rather than restarting onboarding. It summarizes the saved athlete profile, links to profile editing, Library, and plan preview, and keeps the confirmation-gated full local-data reset in a clearly labeled development section.
+- The onboarding **Current training demands** multi-select now toggles correctly: tapping a selected item removes it, while `None` remains mutually exclusive with the other demands.
+- A track-first deterministic selector now combines the athlete's primary sport, event, goals, experience, available days, session duration, season phase, surfaces, and equipment with the local Workout Library.
+- The selector only considers existing recommendation-eligible **Approved** records. Draft and Archived records are never used, and the selector returns a transparent no-match state instead of fabricating a workout.
+- Coach-created-plan and logging-only modes remain protected: the selector explains that the current plan stays in control and does not overwrite it.
+- Multi-sport profiles remain supported, but automatic planning intentionally requires Track & field as the current primary focus until another sport pathway has a reviewed workout library.
+- The selector applies event/pathway, athlete-level, season-phase, surface, and required-equipment hard gates; ranks matches deterministically; avoids back-to-back high-speed targets on consecutive selected days; and provides up to two eligible alternatives.
+- Every proposed day explains why it fits, why harder work may be excluded, required setup, a stop rule, and the readable names of the supporting source groups.
+- The athlete reviews the full suggested week before saving. Saving requires confirmation and replaces only the editable recurring week; History and completed sessions remain unchanged.
+- Selected Library records are converted into normal SprintLab planned workouts with authored Warm-up, Track, Plyometrics, Strength, and Cooldown content. Track work keeps rep-level recording and Strength keeps set-level recording in Workout Mode.
+- The supplied July 2026 Workout Library documents were re-audited against the source. All 44 local records already contain the documented sprint, plyometric, strength/bodyweight, cooldown, intensity, recovery, cue, modification, safety, and source content, so no duplicate seed content was introduced.
+- Readable source-name mappings now appear in Library detail, Settings, and plan preview instead of presenting only internal source IDs.
+- Split now appears purposefully in Settings, plan preview/no-match guidance, and the completed-workout review. The completion appearance uses a small Expo-compatible fade/scale celebration without adding a heavy animation dependency.
+- The principal onboarding, Today, Plan, Readiness, Workout, Log, Progress, Settings, and plan-preview content containers now use centered maximum widths so phone layouts remain fluid while tablet and desktop content does not stretch excessively.
 
 ### History tab
 
@@ -271,6 +288,8 @@ The Stage 1 clickable prototype exists in `/Users/joshuaacha/Desktop/sprintlab`.
 
 - `app/(tabs)/index.tsx` — pre-workout Today dashboard
 - `app/(tabs)/plan.tsx` — editable recurring weekly schedule
+- `app/plan-preview.tsx` — deterministic Approved-workout weekly-plan review
+- `app/settings.tsx` — athlete preferences, profile actions, Library explanation, and development reset
 - `app/(tabs)/library.tsx` — searchable, filterable curated workout catalog
 - `app/library-detail.tsx` — library workout detail and lifecycle controls
 - `app/(tabs)/history.tsx` — saved-session history
@@ -285,12 +304,14 @@ The Stage 1 clickable prototype exists in `/Users/joshuaacha/Desktop/sprintlab`.
 - `constants/sprintlab.ts` — app color palette
 - `data/workouts.ts` — sample workout and weekly plan data
 - `data/workout-library.ts` — authored starter-catalog metadata and seed records
+- `data/workout-sources.ts` — readable source labels for approved-library explanations
 - `data/domain-samples.ts` — compiling examples for every full domain model
 - `types/index.ts` — workout and log models
 - `types/domain.ts` — stable athlete, exercise, workout, schedule, readiness, result, log, and weekly-plan contracts
 - `types/workout-library.ts` — typed curated-library contract
 - `utils/storage.ts` — AsyncStorage persistence
 - `utils/workout-library.ts` — versioned local library repository, validation, lifecycle actions, filters, and sorting
+- `utils/plan-selector.ts` — track-first hard gates, deterministic ranking, alternatives, explanations, and Library-to-Plan conversion
 - `utils/training-history.ts` — History filtering, labels, soreness/key-sprint summaries, and duplicate-plan conversion
 - `utils/domain-adapters.ts` — converts prototype plans and completed sessions into full structured domain records
 - `utils/progress.ts` — date-safe weekly adherence, streak, sprint-series, recovery-trend, and recent-session aggregation
@@ -298,6 +319,7 @@ The Stage 1 clickable prototype exists in `/Users/joshuaacha/Desktop/sprintlab`.
 - `utils/athlete-profile.ts` — local athlete-profile persistence, old-track-profile migration, sport defaults, and speed-pathway mapping
 - `utils/sport-copy.ts` — reusable sport-aware product, competition, pathway, and performance labels
 - `app/profile.tsx` — local multi-sport athlete-profile setup
+- `components/split-moment.tsx` — compact reusable Split guidance/celebration moment
 - `docs/SPEED_PLATFORM_LANGUAGE_AUDIT.md` — universal-versus-track language audit and migration notes
 
 Some untouched Expo starter files still exist. They are not part of the active SprintLab UI and can be removed carefully during later cleanup.
@@ -332,6 +354,8 @@ Some untouched Expo starter files still exist. They are not part of the active S
 - The July 24 Workout Library content-authoring pass replaced the generated section placeholders with the supplied authored prescriptions across all 44 records, bumped the local seed to version 2 with a safe placeholder-only migration, and completed `npx tsc --noEmit` plus `npx expo lint` with no errors or warnings.
 - The July 24 speed-platform architecture pass completed `npx tsc --noEmit`, `npx expo lint`, and a clean Expo web export. It added sport-aware profile migration, sport/pathway/timing contracts, universal Library filters and copy, a local Athlete Profile setup route, and the language audit without deleting local training data or adding non-track prescriptions.
 - The July 24 onboarding pass completed `npx tsc --noEmit`, `npx expo lint`, and a clean Expo web export. It adds validation, back/continue navigation, progress indicators, partial local draft persistence, resume behavior, safety acknowledgement, and final local profile saving. It does not generate a plan.
+- The July 25 selector/Settings pass completed `npx tsc --noEmit`, `npm run lint`, `git diff --check`, and a clean Expo production-web export of all 22 static routes, including the new Settings and plan-preview routes.
+- Responsive source review confirmed centered maximum-width containers on onboarding, Today, Plan, Readiness, Workout, Log, Progress, Settings, and plan preview. The production bundle could not be interacted with through the isolated in-app browser because that browser could not reach the Mac's localhost server; a final phone/tablet visual walkthrough remains a manual device check rather than a claimed automated pass.
 
 The owner should still confirm the same persistence loop once in Expo Go on the iPhone:
 
@@ -452,15 +476,13 @@ TestFlight belongs in private beta, not the initial prototype. It requires the p
 
 1. On the iPhone, test Thursday/Friday/another current day against Plan, then test Readiness → Start → extra rep/set/exercise → Review → Save → History/Progress and restart the app to confirm persistence.
 2. Use the prototype during a real workout and record friction or missing information.
-3. Test the new Athlete Profile setup in Expo Go/web and verify an existing profile remains mapped to track and field after a restart.
-4. Expand the initial Athlete Profile setup into the full sport-aware onboarding review flow only after its basic fields feel useful.
-5. Add lightweight capture controls for surface, starting method, footwear, weather, and numeric pain severity instead of leaving those fields unknown.
-6. Add the deterministic selector only after full workout content and onboarding inputs exist; it must select only an existing approved record and never generate training.
-7. Add reusable workout templates before building automatic plans. Training History now includes date-specific duplicate-session actions.
-6. Initialize Git and connect GitHub so working versions have checkpoints.
-7. After the manual workflow is genuinely useful, add controlled rule-based plan generation.
+3. Test Profile & Settings, edit-profile return behavior, and the full local-data reset on a throwaway device/browser state.
+4. Review and save one deterministic track week, then confirm Today follows the correct saved weekday and the plan remains editable afterward.
+5. Add dated meet-window logic and recent completed-session/high-CNS history to the selector before calling it adaptive; the current selector builds a recurring profile-based week and does not yet rewrite it from readiness or recent logs.
+6. Add lightweight capture controls for surface, starting method, footwear, weather, and numeric pain severity instead of leaving those fields unknown.
+7. Add reusable user-authored workout templates. Training History already includes date-specific duplicate-session actions.
 8. After several real sessions exist, review whether the Progress series and recovery trends answer useful training questions without extra logging burden.
-9. Add Supabase after the personal workflow is proven.
+9. Add Supabase only after the personal workflow is proven.
 
 ## Instructions for the next Codex session
 

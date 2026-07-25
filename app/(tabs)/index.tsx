@@ -47,7 +47,7 @@ export default function TodayScreen() {
     router.push('/workout');
   };
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.page}>
-    <View style={styles.top}><View><Eyebrow>{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</Eyebrow><Text style={styles.brand}>SPRINTLAB</Text></View><Pressable accessibilityLabel="Open athlete profile" onPress={() => router.push('/profile')} style={styles.avatar}><Text style={styles.avatarText}>{athlete?.name.trim().slice(0, 1).toUpperCase() || 'S'}</Text></Pressable></View>
+    <View style={styles.top}><View><Eyebrow>{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</Eyebrow><Text style={styles.brand}>SPRINTLAB</Text></View><Pressable accessibilityLabel="Open profile and settings" onPress={() => router.push('/settings')} style={styles.avatar}><Text style={styles.avatarText}>{athlete?.name.trim().slice(0, 1).toUpperCase() || 'S'}</Text></Pressable></View>
     <ScreenTitle subtitle="Review your readiness and today’s scheduled session.">Today</ScreenTitle>
 
     {!readiness ? <Pressable onPress={() => router.push('/readiness')}><Card style={styles.emptyReadiness}>
@@ -80,7 +80,7 @@ export default function TodayScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: palette.bg }, page: { padding: 20, paddingBottom: 36, gap: 18 },
+  safe: { flex: 1, backgroundColor: palette.bg }, page: { padding: 20, paddingBottom: 36, gap: 18, width: '100%', maxWidth: 820, alignSelf: 'center' },
   top: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, brand: { color: palette.text, fontWeight: '900', fontSize: 18, letterSpacing: 1 },
   avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: palette.surface2, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: palette.border }, avatarText: { color: palette.text, fontWeight: '800' },
   emptyReadiness: { flexDirection: 'row', alignItems: 'center', gap: 13, borderStyle: 'dashed' }, iconCircle: { width: 44, height: 44, borderRadius: 14, backgroundColor: palette.accentDark, alignItems: 'center', justifyContent: 'center' },

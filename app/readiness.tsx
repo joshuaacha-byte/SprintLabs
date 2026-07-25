@@ -159,7 +159,7 @@ export default function ReadinessScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.bg },
-  page: { padding: 20, paddingBottom: 40, gap: 16 },
+  page: { padding: 20, paddingBottom: 40, gap: 16, width: '100%', maxWidth: 760, alignSelf: 'center' },
   back: { width: 44, height: 44, borderRadius: 14, backgroundColor: palette.surface, alignItems: 'center', justifyContent: 'center' },
   partHead: { flexDirection: 'row', alignItems: 'center', gap: 11, marginTop: 6 },
   partNumber: { width: 30, height: 30, borderRadius: 15, textAlign: 'center', textAlignVertical: 'center', lineHeight: 30, color: '#0B1000', backgroundColor: palette.accent, fontSize: 14, fontWeight: '900' },

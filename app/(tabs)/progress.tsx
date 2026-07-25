@@ -175,7 +175,7 @@ function EmptyCard({ icon, title, copy }: { icon: keyof typeof MaterialIcons.gly
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.bg },
-  page: { padding: 20, paddingBottom: 40, gap: 16 },
+  page: { padding: 20, paddingBottom: 40, gap: 16, width: '100%', maxWidth: 900, alignSelf: 'center' },
   cardEyebrow: { color: palette.accent, fontWeight: '900', letterSpacing: 1.4, fontSize: 10 },
   weekCard: { gap: 15, borderColor: '#405020' },
   weekHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },
