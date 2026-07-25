@@ -1,0 +1,325 @@
+import type {
+  FootwearType,
+  PainSeverity,
+  PainReport,
+  StartingMethod,
+  TrainingLog as DomainTrainingLog,
+  TrainingSurface,
+  WeatherConditions,
+} from './domain';
+
+export type ExerciseTracking =
+  | { kind: 'completion' }
+  | {
+      kind: 'track';
+      reps: number;
+      distanceMeters?: number;
+      targetIntensity?: number;
+      restSeconds?: number;
+    }
+  | {
+      kind: 'strength';
+      sets: number;
+      targetReps: string;
+      targetLoad?: number;
+      restSeconds?: number;
+    };
+
+export type PlannedExercise = {
+  id: string;
+  name: string;
+  detail?: string;
+  tracking: ExerciseTracking;
+};
+
+export type PlannedWorkoutSection = {
+  title: string;
+  exercises: PlannedExercise[];
+};
+
+export type PlannedWorkout = {
+  id: string;
+  title: string;
+  purpose: string;
+  durationMinutes: number;
+  sections: PlannedWorkoutSection[];
+};
+
+export type WeekdayIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export type ScheduledDay = {
+  dayIndex: WeekdayIndex;
+  shortLabel: string;
+  fullLabel: string;
+  kind: 'workout' | 'rest';
+  workout?: PlannedWorkout;
+  restTitle?: string;
+  restNote?: string;
+};
+
+export type ReadinessLevel = 'green' | 'yellow' | 'red';
+
+export type ReadinessSensation =
+  | 'minor-tightness'
+  | 'lingering-niggle'
+  | 'severe-acute';
+
+export type ReadinessLocation =
+  | 'hamstring'
+  | 'achilles-calf'
+  | 'shin'
+  | 'groin-hip-flexor'
+  | 'foot-ankle'
+  | 'other';
+
+export type ReadinessDecision = {
+  date: string;
+  status: 'completed' | 'skipped';
+  sleep?: number;
+  sleepQuality?: number;
+  neuralReadiness?: number;
+  focus?: number;
+  fuelHydrated?: boolean;
+  hasLocalizedIssue?: boolean;
+  sensation?: ReadinessSensation;
+  location?: ReadinessLocation;
+  otherLocationDetail?: string;
+  painSeverity?: PainSeverity;
+  hesitatesAtMaxEffort?: boolean;
+  readinessLevel?: ReadinessLevel;
+  readinessReasons?: string[];
+  readinessGuidance?: string;
+  // Legacy prototype fields remain optional so existing local records still load.
+  energy?: number;
+  hamstring?: number;
+  soreness?: number;
+  painNotes: string;
+};
+
+export type ResultStatus = 'pending' | 'completed' | 'skipped';
+
+export type TrackConditionType =
+  | 'indoor'
+  | 'no-gauge'
+  | 'still'
+  | 'headwind'
+  | 'tailwind'
+  | 'measured';
+
+export type TrackConditions = {
+  type: TrackConditionType;
+  measuredWind?: number;
+};
+
+export type RepFeeling = 'smooth' | 'flat' | 'tight' | 'stopped';
+
+export type ResultChangeReason =
+  | 'tightness-or-pain'
+  | 'fatigue'
+  | 'coach-adjustment'
+  | 'weather'
+  | 'equipment-or-space'
+  | 'time-or-schedule'
+  | 'other';
+
+export type TrackRepResult = {
+  repNumber: number;
+  status: ResultStatus;
+  plannedDistanceMeters?: number;
+  intensityTargetPercent?: number;
+  plannedRestSeconds?: number;
+  timeSeconds?: number;
+  feeling?: RepFeeling;
+  windOverride?: TrackConditions;
+  // Legacy numeric wind values remain optional so earlier sessions still load.
+  wind?: number;
+  testName?: string;
+  distanceUnit?: import('./domain').DistanceUnit;
+  timingMethod?: import('./domain').TimingMethod;
+  startType?: import('./domain').PerformanceStartType;
+  directionPattern?: import('./domain').DirectionPattern;
+  notes?: string;
+};
+
+export type StrengthSetResult = {
+  setNumber: number;
+  status: ResultStatus;
+  load?: number;
+  reps?: number;
+};
+
+export type ActualExerciseResult = {
+  exerciseId: string;
+  sectionTitle: string;
+  trackingKind: ExerciseTracking['kind'];
+  origin?: 'planned' | 'added';
+  exerciseSnapshot?: PlannedExercise;
+  status: ResultStatus;
+  changeReason?: ResultChangeReason;
+  changeReasonNote?: string;
+  notes: string;
+  trackReps?: TrackRepResult[];
+  strengthSets?: StrengthSetResult[];
+};
+
+export type SessionTrainingContext = {
+  surface: TrainingSurface;
+  startingMethod: StartingMethod;
+  footwear: FootwearType;
+  weather: WeatherConditions;
+  painAreas: PainReport[];
+};
+
+export type ActiveWorkoutSession = {
+  id: string;
+  plannedWorkoutSnapshot: PlannedWorkout;
+  scheduledDate?: string;
+  scheduledDayIndex?: WeekdayIndex;
+  readinessStatus: ReadinessDecision['status'];
+  readinessSnapshot?: ReadinessDecision;
+  startedAt: string;
+  elapsedSeconds: number;
+  trackConditions?: TrackConditions;
+  // Required for new records; optional here so completed prototype records still load.
+  trainingContext?: SessionTrainingContext;
+  actualResults: ActualExerciseResult[];
+};
+
+export type PostWorkoutReview = {
+  completed: boolean;
+  rpe: number;
+  energy: number;
+  sleep: number;
+  hamstring: number;
+  soreness: number;
+  bodyWeight?: number;
+  notes: string;
+};
+
+export type CompletedWorkoutSession = ActiveWorkoutSession & {
+  finishedAt: string;
+  review: PostWorkoutReview;
+  // New records include the full domain log; optional for saved prototype records.
+  structuredLog?: DomainTrainingLog;
+};
+
+export type TrainingLogSummary = {
+  id: string;
+  sessionId?: string;
+  date: string;
+  completed: boolean;
+  rpe: number;
+  energy: number;
+  sleep: number;
+  hamstring: number;
+  soreness: number;
+  sprintTime?: number;
+  bodyWeight?: number;
+  notes: string;
+  workoutTitle?: string;
+  exercisesCompleted?: number;
+  exercisesPlanned?: number;
+};
+
+export type FutureWorkoutOverride = {
+  id: string;
+  date: string;
+  workout: PlannedWorkout;
+  sourceTrainingLogId?: string;
+};
+
+export type {
+  AccessLevel,
+  AgeRange,
+  AthleteSport,
+  AthleteExperienceLevel,
+  AthleteOnboardingDraft,
+  AthleteProfile,
+  BaseballSoftballProfile,
+  BasketballProfile,
+  ClassificationResult,
+  ApprovalStatus,
+  CoachInvolvement,
+  CompetitionCategory,
+  CompetitionLevel,
+  CurrentTeamTrainingLoad,
+  DirectionPattern,
+  DistanceUnit,
+  EquipmentType,
+  Exercise,
+  ExerciseCategory,
+  ExerciseResult,
+  ExpandedWorkoutCategory,
+  FootballProfile,
+  FootwearType,
+  ISODateString,
+  ISODateTimeString,
+  GeneralSpeedProfile,
+  ModificationReason,
+  OneToFive,
+  OneToTen,
+  PainArea,
+  PainClassification,
+  PainReport,
+  PainSeverity,
+  PersonalBest,
+  PrimaryGoal,
+  PerformanceStartType,
+  PerformanceTest,
+  ReadinessCheck,
+  RepCompletionStatus,
+  ScheduledWorkout,
+  SeasonPhase,
+  SkillExperience,
+  SoccerProfile,
+  SpeedGoal,
+  SpeedPathway,
+  SportScheduleConstraints,
+  SprintEvent,
+  SprintRepRecord,
+  StartingMethod,
+  TrainingDay,
+  TrainingDemand,
+  TrainingPlanMode,
+  TrainingContext,
+  TrainingLog,
+  TrainingSurface,
+  WarmupFeeling,
+  WeatherConditions,
+  WeatherType,
+  WeeklyPlan,
+  WindConditions,
+  WindType,
+  Workout,
+  WorkoutCategory,
+  WorkoutCompletionStatus,
+  WorkoutModification,
+  WorkoutSection,
+  WorkoutSectionCategory,
+  WorkoutStatus,
+  ZeroToTen,
+  TimingMethod,
+  TrackProfile,
+  SprintConsistency,
+} from './domain';
+
+export type {
+  EventPathway,
+  EventTag,
+  IntensityBasis,
+  IntensityPrescription,
+  LibraryApprovalStatus,
+  LibraryAthleteLevel,
+  LibrarySeasonPhase,
+  LibrarySurface,
+  LibraryWorkout,
+  LibraryWorkoutCategory,
+  LibraryWorkoutItem,
+  LibraryWorkoutSection,
+  MetabolicDemand,
+  RecoveryPrescription,
+  SurfaceRequirement,
+  WorkoutLibraryFilters,
+  WorkoutLibraryState,
+  WorkoutMetrics,
+} from './workout-library';
