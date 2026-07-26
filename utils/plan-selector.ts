@@ -17,6 +17,7 @@ import type {
   WeekdayIndex,
 } from '@/types';
 import { weekdayLabels } from '@/data/workouts';
+import { deriveSeasonPhase, meetWindowAllowsWorkout, seasonCalendarFromProfile } from '@/utils/season-engine';
 import { isRecommendationEligible } from '@/utils/workout-library';
 
 export type SuggestedAlternative = {
@@ -58,6 +59,7 @@ type CandidateContext = {
   phase: LibrarySeasonPhase;
   surfaces: Set<LibrarySurface>;
   profile: AthleteProfile;
+  season: ReturnType<typeof deriveSeasonPhase>;
 };
 
 const dayIndexByTrainingDay: Record<TrainingDay, WeekdayIndex> = {
@@ -110,15 +112,6 @@ function profileLevel(level: AthleteExperienceLevel): LibraryAthleteLevel {
   if (level === 'developing') return 'developing';
   if (level === 'intermediate') return 'trained';
   return 'advanced';
-}
-
-function profilePhase(profile: AthleteProfile): LibrarySeasonPhase {
-  if (profile.seasonPhase === 'offseason' || profile.seasonPhase === 'general-preparation') return 'general-preparation';
-  if (profile.seasonPhase === 'specific-preparation') return 'specific-preparation';
-  if (profile.seasonPhase === 'pre-competition') return 'pre-competition';
-  if (profile.seasonPhase === 'competition') return 'competition';
-  if (profile.seasonPhase === 'championship') return 'taper';
-  return 'transition';
 }
 
 function availableSurfaces(profile: AthleteProfile) {
@@ -192,14 +185,56 @@ function requestedCategories(profile: AthleteProfile, count: number): LibraryWor
 }
 
 function selectedDays(profile: AthleteProfile) {
+  const blocked = new Set<WeekdayIndex>();
+  blocked.add(dayIndexByTrainingDay[profile.preferredRestDay]);
+  (profile.sportPracticeDays ?? []).forEach(day => blocked.add(dayIndexByTrainingDay[day]));
+  (profile.gameOrCompetitionDays ?? []).forEach(value => {
+    if (value in dayIndexByTrainingDay) {
+      blocked.add(dayIndexByTrainingDay[value as TrainingDay]);
+      return;
+    }
+    const date = new Date(`${value}T12:00:00`);
+    const daysAway = Math.ceil((date.getTime() - new Date().setHours(0, 0, 0, 0)) / 86_400_000);
+    if (!Number.isNaN(date.getTime()) && daysAway >= 0 && daysAway <= 6) blocked.add(date.getDay() as WeekdayIndex);
+  });
+  (profile.seasonCalendar?.priorityMeets ?? []).forEach(meet => {
+    const date = new Date(`${meet.date}T12:00:00`);
+    const daysAway = Math.ceil((date.getTime() - new Date().setHours(0, 0, 0, 0)) / 86_400_000);
+    if (!Number.isNaN(date.getTime()) && daysAway >= 0 && daysAway <= 6) blocked.add(date.getDay() as WeekdayIndex);
+  });
+
   if (profile.availableTrainingDays.length) {
-    return unique(profile.availableTrainingDays.map(day => dayIndexByTrainingDay[day])).sort((a, b) => {
+    return unique(profile.availableTrainingDays.map(day => dayIndexByTrainingDay[day]))
+      .filter(day => !blocked.has(day))
+      .sort((a, b) => {
       const order = [1, 2, 3, 4, 5, 6, 0];
       return order.indexOf(a) - order.indexOf(b);
     });
   }
   const count = Math.min(5, Math.max(1, profile.trainingDaysPerWeek > 0 ? profile.trainingDaysPerWeek : 3));
-  return defaultDayPatterns[count] ?? defaultDayPatterns[3];
+  return (defaultDayPatterns[count] ?? defaultDayPatterns[3]).filter(day => !blocked.has(day));
+}
+
+export function blockedWeekdayReasons(profile: AthleteProfile) {
+  const reasons = new Map<WeekdayIndex, string[]>();
+  const add = (day: WeekdayIndex, reason: string) => reasons.set(day, [...(reasons.get(day) ?? []), reason]);
+  add(dayIndexByTrainingDay[profile.preferredRestDay], 'Preferred rest day');
+  (profile.sportPracticeDays ?? []).forEach(day => add(dayIndexByTrainingDay[day], 'Team practice'));
+  (profile.gameOrCompetitionDays ?? []).forEach(value => {
+    if (value in dayIndexByTrainingDay) {
+      add(dayIndexByTrainingDay[value as TrainingDay], 'Recurring game or competition');
+      return;
+    }
+    const date = new Date(`${value}T12:00:00`);
+    const daysAway = Math.ceil((date.getTime() - new Date().setHours(0, 0, 0, 0)) / 86_400_000);
+    if (!Number.isNaN(date.getTime()) && daysAway >= 0 && daysAway <= 6) add(date.getDay() as WeekdayIndex, `Competition on ${value}`);
+  });
+  (profile.seasonCalendar?.priorityMeets ?? []).forEach(meet => {
+    const date = new Date(`${meet.date}T12:00:00`);
+    const daysAway = Math.ceil((date.getTime() - new Date().setHours(0, 0, 0, 0)) / 86_400_000);
+    if (!Number.isNaN(date.getTime()) && daysAway >= 0 && daysAway <= 6) add(date.getDay() as WeekdayIndex, `${meet.priority}-priority: ${meet.name}`);
+  });
+  return reasons;
 }
 
 function categoryScore(workout: LibraryWorkout, requested: LibraryWorkoutCategory, context: CandidateContext) {
@@ -217,9 +252,17 @@ function rankedForCategory(
   requested: LibraryWorkoutCategory,
   context: CandidateContext,
   usedIds: Set<string>,
+  dayIndex: WeekdayIndex,
 ) {
+  const today = new Date();
+  const daysAhead = (dayIndex - today.getDay() + 7) % 7;
+  const workoutDate = new Date(today);
+  workoutDate.setDate(today.getDate() + daysAhead);
+  const date = workoutDate.toLocaleDateString('en-CA');
+  const calendar = seasonCalendarFromProfile(context.profile);
   return workouts
     .filter(workout => hardGateMatch(workout, context))
+    .filter(workout => meetWindowAllowsWorkout(workout, context.season, date, calendar))
     .filter(workout => workout.primaryCategory === requested || workout.secondaryCategories.includes(requested))
     .map(workout => ({ workout, score: categoryScore(workout, requested, context) - (usedIds.has(workout.id) ? 100 : 0) }))
     .sort((first, second) => second.score - first.score
@@ -247,7 +290,7 @@ function itemDetail(item: LibraryWorkoutItem) {
   return [structure, prescription].filter(Boolean).join(' — ');
 }
 
-function toPlannedExercise(item: LibraryWorkoutItem, section: 'warmup' | 'sprintWork' | 'plyometrics' | 'strength' | 'cooldown'): PlannedExercise {
+function toPlannedExercise(item: LibraryWorkoutItem, section: 'warmup' | 'sprintWork' | 'plyometrics' | 'strength' | 'coreBodyweight' | 'cooldown'): PlannedExercise {
   const detail = itemDetail(item);
   if (section === 'sprintWork' && item.distanceMeters) {
     return {
@@ -280,7 +323,7 @@ function toPlannedExercise(item: LibraryWorkoutItem, section: 'warmup' | 'sprint
 }
 
 export function libraryWorkoutToPlannedWorkout(workout: LibraryWorkout): PlannedWorkout {
-  const mapSection = (key: 'warmup' | 'sprintWork' | 'plyometrics' | 'strength' | 'cooldown', title: string) => ({
+  const mapSection = (key: 'warmup' | 'sprintWork' | 'plyometrics' | 'strength' | 'coreBodyweight' | 'cooldown', title: string) => ({
     title,
     exercises: workout.sections[key].items.map(item => toPlannedExercise(item, key)),
   });
@@ -294,7 +337,7 @@ export function libraryWorkoutToPlannedWorkout(workout: LibraryWorkout): Planned
       mapSection('sprintWork', 'Track'),
       mapSection('plyometrics', 'Plyometrics'),
       mapSection('strength', 'Strength'),
-      { title: 'Conditioning', exercises: [] },
+      mapSection('coreBodyweight', 'Core / bodyweight'),
       mapSection('cooldown', 'Cooldown'),
     ],
   };
@@ -303,7 +346,7 @@ export function libraryWorkoutToPlannedWorkout(workout: LibraryWorkout): Planned
 function suggestionDetails(
   dayIndex: WeekdayIndex,
   requested: LibraryWorkoutCategory,
-  ranked: Array<{ workout: LibraryWorkout; score: number }>,
+  ranked: { workout: LibraryWorkout; score: number }[],
   context: CandidateContext,
 ): SuggestedPlanDay {
   const selected = ranked[0].workout;
@@ -367,15 +410,34 @@ export function buildDeterministicWeeklyPlan(
     };
   }
 
+  const season = deriveSeasonPhase(profile);
+  if (season.phase === 'needs-calendar') {
+    return {
+      status: 'no-match',
+      title: 'Complete your competition calendar',
+      message: 'SprintLab will not guess your season phase.',
+      reasons: [season.explanation],
+    };
+  }
+
   const context: CandidateContext = {
     event: profileEvent(profile),
     pathway: profilePathway(profile),
     level: profileLevel(profile.experienceLevel),
-    phase: profilePhase(profile),
+    phase: season.phase,
     surfaces: availableSurfaces(profile),
     profile,
+    season,
   };
   const days = selectedDays(profile);
+  if (!days.length) {
+    return {
+      status: 'no-match',
+      title: 'No open speed-training day',
+      message: 'The selected rest day, practices, and competitions occupy every available day.',
+      reasons: ['Change the preferred rest day, practice schedule, or available speed-training days before building a week.'],
+    };
+  }
   const categories = requestedCategories(profile, days.length);
   const usedIds = new Set<string>();
   const suggestions: SuggestedPlanDay[] = [];
@@ -386,12 +448,22 @@ export function buildDeterministicWeeklyPlan(
     const previousDay = index > 0 ? days[index - 1] : null;
     const previousSuggestion = suggestions[index - 1];
     const consecutive = previousDay !== null && ((dayIndex - previousDay + 7) % 7 === 1);
-    if (consecutive && previousSuggestion && highCategories.has(previousSuggestion.targetCategory) && highCategories.has(requested)) {
+    const previousWorkout = previousSuggestion
+      ? workouts.find(workout => workout.id === previousSuggestion.workoutId)
+      : undefined;
+    const previousWasHighCns = Boolean(previousWorkout?.metrics.highCns);
+    if (consecutive && previousWasHighCns && highCategories.has(requested)) {
       requested = index === days.length - 1 && profile.weightRoomAccess === 'regular' ? 'strength' : 'tempo-recovery';
     }
-    let ranked = rankedForCategory(workouts, requested, context, usedIds);
+    let ranked = rankedForCategory(workouts, requested, context, usedIds, dayIndex);
+    if (consecutive && previousWasHighCns) {
+      ranked = ranked.filter(item => !item.workout.metrics.highCns);
+    }
     if (!ranked.length && requested !== 'tempo-recovery') {
-      ranked = rankedForCategory(workouts, 'tempo-recovery', context, usedIds);
+      ranked = rankedForCategory(workouts, 'tempo-recovery', context, usedIds, dayIndex);
+      if (consecutive && previousWasHighCns) {
+        ranked = ranked.filter(item => !item.workout.metrics.highCns);
+      }
       if (ranked.length) requested = 'tempo-recovery';
     }
     if (!ranked.length) {
@@ -430,7 +502,7 @@ export function buildDeterministicWeeklyPlan(
     status: 'ready',
     schedule,
     suggestions,
-    summary: `${suggestions.length} Approved track sessions for a ${context.event} athlete in ${context.phase.replaceAll('-', ' ')}.`,
+    summary: `${suggestions.length} Approved track sessions for a ${context.event} athlete in ${context.phase.replaceAll('-', ' ')}. ${season.explanation}`,
     warnings: [
       'This preview does not change the current plan until you save it.',
       'Daily readiness can still be a reason to stop, modify, or consult a coach.',
@@ -462,4 +534,71 @@ export function replaceSuggestedWorkout(
   const suggestions = plan.suggestions.map(item => item.dayIndex === dayIndex ? nextDay : item);
   const schedule = plan.schedule.map(day => day.dayIndex === dayIndex ? { ...day, kind: 'workout' as const, workout: nextDay.plannedWorkout } : day);
   return { ...plan, suggestions, schedule };
+}
+
+function scheduleFromSuggestions(suggestions: SuggestedPlanDay[]) {
+  const suggestionByDay = new Map(suggestions.map(item => [item.dayIndex, item]));
+  return ([1, 2, 3, 4, 5, 6, 0] as WeekdayIndex[]).map(dayIndex => {
+    const suggestion = suggestionByDay.get(dayIndex);
+    return suggestion
+      ? {
+          dayIndex,
+          shortLabel: weekdayLabels[dayIndex].short,
+          fullLabel: weekdayLabels[dayIndex].full,
+          kind: 'workout' as const,
+          workout: suggestion.plannedWorkout,
+        }
+      : restDay(dayIndex);
+  });
+}
+
+export function updateSuggestedWorkout(
+  plan: Extract<WeeklyPlanSuggestion, { status: 'ready' }>,
+  dayIndex: WeekdayIndex,
+  plannedWorkout: PlannedWorkout,
+) {
+  const suggestions = plan.suggestions.map(item => item.dayIndex === dayIndex ? { ...item, plannedWorkout } : item);
+  return { ...plan, suggestions, schedule: scheduleFromSuggestions(suggestions) };
+}
+
+export function removeSuggestedWorkout(
+  plan: Extract<WeeklyPlanSuggestion, { status: 'ready' }>,
+  dayIndex: WeekdayIndex,
+) {
+  const suggestions = plan.suggestions.filter(item => item.dayIndex !== dayIndex);
+  return {
+    ...plan,
+    suggestions,
+    schedule: scheduleFromSuggestions(suggestions),
+    summary: `${suggestions.length} reviewed session${suggestions.length === 1 ? '' : 's'} remain after your changes.`,
+  };
+}
+
+export function moveSuggestedWorkout(
+  plan: Extract<WeeklyPlanSuggestion, { status: 'ready' }>,
+  fromDay: WeekdayIndex,
+  toDay: WeekdayIndex,
+) {
+  if (fromDay === toDay) return plan;
+  const source = plan.suggestions.find(item => item.dayIndex === fromDay);
+  if (!source) return plan;
+  const target = plan.suggestions.find(item => item.dayIndex === toDay);
+  const suggestions = plan.suggestions.map(item => {
+    if (item.dayIndex === fromDay) {
+      return {
+        ...item,
+        dayIndex: toDay,
+        whyThisFits: [...item.whyThisFits, `Moved to ${weekdayLabels[toDay].full} during review`],
+      };
+    }
+    if (target && item.dayIndex === toDay) {
+      return {
+        ...item,
+        dayIndex: fromDay,
+        whyThisFits: [...item.whyThisFits, `Swapped to ${weekdayLabels[fromDay].full} during review`],
+      };
+    }
+    return item;
+  });
+  return { ...plan, suggestions, schedule: scheduleFromSuggestions(suggestions) };
 }

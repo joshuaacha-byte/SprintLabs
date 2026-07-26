@@ -3,6 +3,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Card, Eyebrow, PrimaryButton, ScreenTitle } from '@/components/sprint-ui';
+import { AppFooter } from '@/components/app-footer';
 import { palette } from '@/constants/sprintlab';
 import type { SprintEvent, TrainingLog, WorkoutCategory, WorkoutCompletionStatus } from '@/types';
 import { getTrainingLogs } from '@/utils/storage';
@@ -61,6 +62,7 @@ export default function HistoryScreen() {
 
     <Text style={styles.resultsLabel}>{visibleLogs.length} {visibleLogs.length === 1 ? 'session' : 'sessions'}</Text>
     {visibleLogs.length ? visibleLogs.map(log => <HistoryRow key={log.id} log={log} onPress={() => router.push({ pathname: '/history-detail', params: { id: log.id } })} />) : <EmptyHistory filtered={Boolean(logs.length)} onToday={() => router.push('/')} onLog={() => router.push('/log')} />}
+    <AppFooter />
   </ScrollView></SafeAreaView>;
 }
 

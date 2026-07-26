@@ -1,26 +1,34 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SplitMoment } from '@/components/split-moment';
 import { Card, Eyebrow, PrimaryButton, ScreenTitle } from '@/components/sprint-ui';
 import { palette } from '@/constants/sprintlab';
 import { workoutSourceNames } from '@/data/workout-sources';
-import type { LibraryWorkout } from '@/types';
+import type { AthleteProfile, LibraryWorkout, PlannedWorkout, WeekdayIndex } from '@/types';
 import { getAthleteProfile } from '@/utils/athlete-profile';
 import {
   buildDeterministicWeeklyPlan,
+  blockedWeekdayReasons,
+  moveSuggestedWorkout,
+  removeSuggestedWorkout,
   replaceSuggestedWorkout,
+  updateSuggestedWorkout,
   type WeeklyPlanSuggestion,
 } from '@/utils/plan-selector';
 import { saveWeekSchedule } from '@/utils/storage';
 import { getLibraryWorkouts } from '@/utils/workout-library';
+import { syncWorkoutReminders } from '@/utils/workout-reminders';
 
 export default function PlanPreviewScreen() {
   const router = useRouter();
   const [workouts, setWorkouts] = useState<LibraryWorkout[]>([]);
+  const [profile, setProfile] = useState<AthleteProfile | null>(null);
   const [result, setResult] = useState<WeeklyPlanSuggestion | null>(null);
   const [saving, setSaving] = useState(false);
+  const [editingDay, setEditingDay] = useState<WeekdayIndex | null>(null);
+  const [movingDay, setMovingDay] = useState<WeekdayIndex | null>(null);
 
   useEffect(() => {
     void Promise.all([getAthleteProfile(), getLibraryWorkouts()]).then(([profile, library]) => {
@@ -29,6 +37,7 @@ export default function PlanPreviewScreen() {
         router.replace('/profile');
         return;
       }
+      setProfile(profile);
       setResult(buildDeterministicWeeklyPlan(profile, library));
     });
   }, [router]);
@@ -45,6 +54,7 @@ export default function PlanPreviewScreen() {
           onPress: async () => {
             setSaving(true);
             await saveWeekSchedule(result.schedule);
+            await syncWorkoutReminders({ profile, schedule: result.schedule });
             setSaving(false);
             router.replace('/plan');
           },
@@ -52,6 +62,29 @@ export default function PlanPreviewScreen() {
       ],
     );
   };
+
+  const editWorkout = (dayIndex: WeekdayIndex, changes: Partial<PlannedWorkout>) => {
+    setResult(current => {
+      if (current?.status !== 'ready') return current;
+      const suggestion = current.suggestions.find(item => item.dayIndex === dayIndex);
+      if (!suggestion) return current;
+      return updateSuggestedWorkout(current, dayIndex, { ...suggestion.plannedWorkout, ...changes });
+    });
+  };
+
+  const removeExercise = (dayIndex: WeekdayIndex, sectionIndex: number, exerciseId: string) => {
+    setResult(current => {
+      if (current?.status !== 'ready') return current;
+      const suggestion = current.suggestions.find(item => item.dayIndex === dayIndex);
+      if (!suggestion) return current;
+      const sections = suggestion.plannedWorkout.sections.map((section, index) => index === sectionIndex
+        ? { ...section, exercises: section.exercises.filter(exercise => exercise.id !== exerciseId) }
+        : section);
+      return updateSuggestedWorkout(current, dayIndex, { ...suggestion.plannedWorkout, sections });
+    });
+  };
+
+  const blocked = profile ? blockedWeekdayReasons(profile) : new Map<WeekdayIndex, string[]>();
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -101,9 +134,20 @@ export default function PlanPreviewScreen() {
               </View>
               <Bullet>Only existing Approved library records were eligible.</Bullet>
               <Bullet>Event, season, experience, surface, and required equipment were hard filters.</Bullet>
-              <Bullet>Consecutive available days do not receive back-to-back high-speed targets.</Bullet>
+              <Bullet>Consecutive available days do not receive back-to-back high-CNS sessions.</Bullet>
+              <Bullet>Practice days, the preferred rest day, and competitions in the next seven days were kept open.</Bullet>
               <Bullet>Draft and Archived workouts were excluded.</Bullet>
             </Card>
+
+            {blocked.size ? <Card style={styles.constraintsCard}>
+              <Text style={styles.ruleTitle}>Protected schedule days</Text>
+              {[...blocked.entries()].map(([day, reasons]) => (
+                <View key={day} style={styles.constraintRow}>
+                  <Text style={styles.constraintDay}>{result.schedule.find(item => item.dayIndex === day)?.fullLabel}</Text>
+                  <Text style={styles.constraintReason}>{reasons.join(' · ')}</Text>
+                </View>
+              ))}
+            </Card> : null}
 
             <View style={styles.week}>
               {result.suggestions.map(suggestion => {
@@ -125,6 +169,70 @@ export default function PlanPreviewScreen() {
                     </View>
 
                     <Text style={styles.purpose}>{suggestion.plannedWorkout.purpose}</Text>
+                    <View style={styles.reviewActions}>
+                      <Pressable onPress={() => setEditingDay(current => current === suggestion.dayIndex ? null : suggestion.dayIndex)} style={styles.reviewAction}>
+                        <MaterialIcons name="edit" size={16} color={palette.accent} />
+                        <Text style={styles.reviewActionText}>{editingDay === suggestion.dayIndex ? 'Done editing' : 'Edit details'}</Text>
+                      </Pressable>
+                      <Pressable onPress={() => setMovingDay(current => current === suggestion.dayIndex ? null : suggestion.dayIndex)} style={styles.reviewAction}>
+                        <MaterialIcons name="swap-horiz" size={16} color={palette.accent} />
+                        <Text style={styles.reviewActionText}>Move / swap</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => Alert.alert('Remove this session?', `${suggestion.plannedWorkout.title} will become a rest/open day in this preview.`, [
+                          { text: 'Keep session', style: 'cancel' },
+                          { text: 'Remove', style: 'destructive', onPress: () => setResult(current => current?.status === 'ready' ? removeSuggestedWorkout(current, suggestion.dayIndex) : current) },
+                        ])}
+                        style={styles.reviewAction}
+                      >
+                        <MaterialIcons name="remove-circle-outline" size={16} color={palette.red} />
+                        <Text style={[styles.reviewActionText, { color: palette.red }]}>Remove</Text>
+                      </Pressable>
+                    </View>
+
+                    {editingDay === suggestion.dayIndex ? <View style={styles.editPanel}>
+                      <Text style={styles.detailLabel}>Session name</Text>
+                      <TextInput value={suggestion.plannedWorkout.title} onChangeText={title => editWorkout(suggestion.dayIndex, { title })} placeholderTextColor={palette.muted} style={styles.editInput} />
+                      <Text style={styles.detailLabel}>Purpose</Text>
+                      <TextInput value={suggestion.plannedWorkout.purpose} onChangeText={purpose => editWorkout(suggestion.dayIndex, { purpose })} placeholderTextColor={palette.muted} multiline style={[styles.editInput, styles.editPurpose]} />
+                      <Text style={styles.detailLabel}>Estimated minutes</Text>
+                      <TextInput
+                        value={String(suggestion.plannedWorkout.durationMinutes)}
+                        onChangeText={value => editWorkout(suggestion.dayIndex, { durationMinutes: Math.min(240, Math.max(1, Number(value.replace(/\D/g, '')) || 1)) })}
+                        keyboardType="number-pad"
+                        style={styles.editInput}
+                      />
+                      <Text style={styles.detailLabel}>Planned exercises</Text>
+                      {suggestion.plannedWorkout.sections.filter(section => section.exercises.length).map((section, sectionIndex) => <View key={`${section.title}:${sectionIndex}`} style={styles.editSection}>
+                        <Text style={styles.editSectionTitle}>{section.title}</Text>
+                        {section.exercises.map(exercise => <View key={exercise.id} style={styles.editExercise}>
+                          <View style={{ flex: 1 }}><Text style={styles.editExerciseName}>{exercise.name}</Text><Text style={styles.editExerciseDetail}>{exercise.detail}</Text></View>
+                          <Pressable accessibilityLabel={`Remove ${exercise.name}`} onPress={() => removeExercise(suggestion.dayIndex, suggestion.plannedWorkout.sections.indexOf(section), exercise.id)} style={styles.removeExercise}>
+                            <MaterialIcons name="close" size={17} color={palette.red} />
+                          </Pressable>
+                        </View>)}
+                      </View>)}
+                      <Text style={styles.editHelp}>You can add or restructure exercises after saving from the Plan editor. Removed items affect only this preview.</Text>
+                    </View> : null}
+
+                    {movingDay === suggestion.dayIndex ? <View style={styles.movePanel}>
+                      <Text style={styles.detailLabel}>Choose an open day—or swap with another session</Text>
+                      <View style={styles.moveOptions}>
+                        {result.schedule.filter(day => day.dayIndex !== suggestion.dayIndex && !blocked.has(day.dayIndex)).map(day => (
+                          <Pressable
+                            key={day.dayIndex}
+                            onPress={() => {
+                              setResult(current => current?.status === 'ready' ? moveSuggestedWorkout(current, suggestion.dayIndex, day.dayIndex) : current);
+                              setMovingDay(null);
+                            }}
+                            style={styles.moveOption}
+                          >
+                            <Text style={styles.moveOptionText}>{day.kind === 'workout' ? `Swap with ${day.shortLabel}` : `Move to ${day.shortLabel}`}</Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    </View> : null}
+
                     <InfoBlock title="Why this fits" items={suggestion.whyThisFits} />
                     {suggestion.harderOptionsExcluded.length ? (
                       <InfoBlock title="Why harder options were excluded" items={suggestion.harderOptionsExcluded} />
@@ -195,6 +303,10 @@ const styles = StyleSheet.create({
   loading: { color: palette.muted, fontSize: 13, lineHeight: 19 },
   reasonCard: { gap: 8 },
   rulesCard: { gap: 8, borderColor: '#405020' },
+  constraintsCard: { gap: 9, borderColor: '#41551A' },
+  constraintRow: { gap: 3, borderTopWidth: 1, borderTopColor: palette.border, paddingTop: 9 },
+  constraintDay: { color: palette.accent, fontSize: 11, fontWeight: '900' },
+  constraintReason: { color: palette.muted, fontSize: 11, lineHeight: 16 },
   ruleHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 },
   ruleTitle: { color: palette.text, fontSize: 15, fontWeight: '900' },
   bulletRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
@@ -209,6 +321,23 @@ const styles = StyleSheet.create({
   workoutMeta: { color: palette.muted, fontSize: 10, marginTop: 4, textTransform: 'capitalize' },
   approved: { color: palette.accent, fontSize: 8, fontWeight: '900', letterSpacing: 0.8 },
   purpose: { color: palette.text, fontSize: 12, lineHeight: 18 },
+  reviewActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  reviewAction: { minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 10, paddingHorizontal: 10, backgroundColor: palette.surface2 },
+  reviewActionText: { color: palette.accent, fontSize: 10, fontWeight: '900' },
+  editPanel: { gap: 8, padding: 12, borderRadius: 14, backgroundColor: '#0B1116', borderWidth: 1, borderColor: palette.border },
+  editInput: { minHeight: 44, borderRadius: 11, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.bg, color: palette.text, paddingHorizontal: 12, fontSize: 13, fontWeight: '700' },
+  editPurpose: { minHeight: 72, paddingTop: 11, textAlignVertical: 'top' },
+  editSection: { gap: 7, borderTopWidth: 1, borderTopColor: palette.border, paddingTop: 9 },
+  editSectionTitle: { color: palette.accent, fontSize: 11, fontWeight: '900' },
+  editExercise: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  editExerciseName: { color: palette.text, fontSize: 11, fontWeight: '800' },
+  editExerciseDetail: { color: palette.muted, fontSize: 9, lineHeight: 13, marginTop: 2 },
+  removeExercise: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  editHelp: { color: palette.muted, fontSize: 9, lineHeight: 14 },
+  movePanel: { gap: 8, padding: 11, borderRadius: 13, backgroundColor: palette.surface2 },
+  moveOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  moveOption: { minHeight: 38, justifyContent: 'center', borderRadius: 10, paddingHorizontal: 11, backgroundColor: palette.accentDark },
+  moveOptionText: { color: palette.accent, fontSize: 10, fontWeight: '900' },
   infoBlock: { backgroundColor: palette.surface2, borderRadius: 13, padding: 11, gap: 5 },
   infoTitle: { color: palette.text, fontSize: 11, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 0.7 },
   detailRow: { gap: 4 },

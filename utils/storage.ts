@@ -4,6 +4,7 @@ import {
   ActiveWorkoutSession,
   CompletedWorkoutSession,
   FutureWorkoutOverride,
+  PendingWorkoutLaunch,
   PlannedWorkout,
   ReadinessDecision,
   ScheduledDay,
@@ -24,8 +25,15 @@ const ACTIVE_SESSION = 'sprintlab:active-workout-session';
 const COMPLETED_SESSIONS = 'sprintlab:completed-workout-sessions';
 const TRAINING_HISTORY = 'sprintlab:training-history';
 const FUTURE_WORKOUT_OVERRIDES = 'sprintlab:future-workout-overrides';
+const PENDING_WORKOUT_LAUNCH = 'sprintlab:pending-workout-launch';
 
 const localDateKey = (date = new Date()) => date.toLocaleDateString('en-CA');
+
+function refreshWorkoutReminders() {
+  void import('@/utils/workout-reminders')
+    .then(({ syncWorkoutReminders }) => syncWorkoutReminders())
+    .catch(() => undefined);
+}
 
 export async function getLogs(): Promise<TrainingLogSummary[]> {
   const value = await AsyncStorage.getItem(LOGS);
@@ -71,6 +79,7 @@ export async function addTrainingLog(log: TrainingLog) {
   const logs = await getTrainingLogs();
   const next = newestFirst([log, ...logs.filter(saved => saved.id !== log.id)]);
   await AsyncStorage.setItem(TRAINING_HISTORY, JSON.stringify(next));
+  refreshWorkoutReminders();
 }
 
 export async function updateTrainingLog(log: TrainingLog) {
@@ -201,6 +210,7 @@ export async function getWeekSchedule(): Promise<ScheduledDay[]> {
 
 export async function saveWeekSchedule(schedule: ScheduledDay[]) {
   await AsyncStorage.setItem(WEEK_SCHEDULE, JSON.stringify(normalizeSchedule(schedule)));
+  refreshWorkoutReminders();
 }
 
 export async function getScheduledDay(dayIndex: number = new Date().getDay(), date = localDateKey()): Promise<ScheduledDay> {
@@ -286,6 +296,26 @@ export async function getReadiness(date: string): Promise<ReadinessDecision | nu
 
 export async function saveReadiness(readiness: ReadinessDecision) {
   await AsyncStorage.setItem(READINESS, JSON.stringify(readiness));
+}
+
+export async function savePendingWorkoutLaunch(launch: PendingWorkoutLaunch) {
+  await AsyncStorage.setItem(PENDING_WORKOUT_LAUNCH, JSON.stringify(clone(launch)));
+}
+
+export async function getPendingWorkoutLaunch(): Promise<PendingWorkoutLaunch | null> {
+  const value = await AsyncStorage.getItem(PENDING_WORKOUT_LAUNCH);
+  if (!value) return null;
+  const launch = JSON.parse(value) as PendingWorkoutLaunch;
+  const createdAt = new Date(launch.createdAt).getTime();
+  if (!Number.isFinite(createdAt) || Date.now() - createdAt > 86_400_000) {
+    await clearPendingWorkoutLaunch();
+    return null;
+  }
+  return launch;
+}
+
+export async function clearPendingWorkoutLaunch() {
+  await AsyncStorage.removeItem(PENDING_WORKOUT_LAUNCH);
 }
 
 export async function startWorkoutSession(

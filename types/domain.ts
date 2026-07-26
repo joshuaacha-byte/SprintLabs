@@ -26,6 +26,17 @@ export type CurrentTeamTrainingLoad = 'low' | 'moderate' | 'high' | 'unknown';
 export type TrainingPlanMode = 'build-my-plan' | 'log-coach-plan' | 'both';
 export type SprintConsistency = 'not-currently-training' | 'occasional' | '1-2-times-weekly' | '3-plus-times-weekly';
 export type TrainingDemand = 'team-practices' | 'games-or-meets' | 'weight-training' | 'another-sport' | 'heavy-school-schedule' | 'none';
+export type MeetPriority = 'A' | 'B' | 'C';
+export type CompetitionStatus = 'out-of-season' | 'preseason' | 'in-season' | 'postseason' | 'unknown';
+export type RaceDevelopmentArea =
+  | 'start-and-first-30'
+  | 'transition-to-upright'
+  | 'maximum-velocity'
+  | 'curve-running'
+  | 'speed-endurance'
+  | 'race-distribution'
+  | 'finish-under-fatigue'
+  | 'unsure';
 
 export type AgeRange =
   | 'under-14'
@@ -231,6 +242,39 @@ export type BaseballSoftballProfile = { position?: string; homeToFirstTime?: num
 export type VolleyballProfile = { position?: string; verticalJump?: number; approachJump?: number };
 export type GeneralSpeedProfile = { testName?: string; preferredTestDistance?: number; distanceUnit?: DistanceUnit; bestTestTime?: number; testSurface?: TrainingSurface };
 
+export type PriorityMeet = {
+  id: string;
+  name: string;
+  date: ISODateString;
+  priority: MeetPriority;
+  events: SprintEvent[];
+  estimated?: boolean;
+};
+
+export type SeasonCalendar = {
+  competitionStatus: CompetitionStatus;
+  trainingBlockStartDate?: ISODateString | null;
+  seasonStartDate?: ISODateString | null;
+  seasonEndDate?: ISODateString | null;
+  firstMeetDate?: ISODateString | null;
+  championshipDate?: ISODateString | null;
+  priorityMeets: PriorityMeet[];
+  datesConfirmedAt?: ISODateTimeString | null;
+};
+
+export type SeasonPhaseOverride = {
+  phase: SeasonPhase;
+  reason: string;
+  setBy: 'coach' | 'prototype-editor';
+  expiresOn?: ISODateString | null;
+};
+
+export type TargetPerformance = {
+  event: SprintEvent;
+  timeSeconds: number;
+  targetDate?: ISODateString | null;
+};
+
 export type AthleteProfile = {
   id: string;
   name: string;
@@ -273,7 +317,7 @@ export type AthleteProfile = {
   primaryPerformanceTest?: PerformanceTest | null;
   secondaryPerformanceTests?: PerformanceTest[];
   sportPracticeDays?: TrainingDay[];
-  gameOrCompetitionDays?: Array<ISODateString | TrainingDay>;
+  gameOrCompetitionDays?: (ISODateString | TrainingDay)[];
   currentTeamTrainingLoad?: CurrentTeamTrainingLoad;
   courtAccess?: AccessLevel;
   sledAccess?: AccessLevel;
@@ -301,7 +345,21 @@ export type AthleteProfile = {
   onboardingComplete?: boolean;
   currentTrainingDemands?: TrainingDemand[];
   onboardingLimitations?: string[];
+  /** Local onboarding gates distinguish an intentional answer from a migration default. */
+  experienceAnswered?: boolean;
+  sportProfileAnswered?: boolean;
   turfAccess?: AccessLevel;
+  /** Local workout reminders. Time is stored in the athlete's current local timezone. */
+  workoutReminderEnabled?: boolean;
+  workoutReminderHour?: number;
+  workoutReminderMinute?: number;
+  /** Optional race-development answers used to rank, never invent, library sessions. */
+  raceDevelopmentAreas?: RaceDevelopmentArea[];
+  /** Athlete-entered performance targets. These are goals, not guarantees. */
+  targetPerformances?: TargetPerformance[];
+  /** Dates, meet priority, and competition status used by the deterministic season engine. */
+  seasonCalendar?: SeasonCalendar;
+  seasonPhaseOverride?: SeasonPhaseOverride | null;
 };
 
 export type AthleteOnboardingDraft = {
@@ -375,8 +433,8 @@ export type Workout = {
   approvalStatus: ApprovalStatus;
   sports?: AthleteSport[];
   speedPathways?: SpeedPathway[];
-  transferGoals?: Array<'acceleration' | 'top-speed' | 'change-of-direction' | 'repeated-sprint' | 'power' | 'test-preparation' | 'track-performance'>;
-  competitionContexts?: Array<'track-meet' | 'football-combine' | 'team-practice' | 'regular-season-game' | 'tournament' | 'general-training'>;
+  transferGoals?: ('acceleration' | 'top-speed' | 'change-of-direction' | 'repeated-sprint' | 'power' | 'test-preparation' | 'track-performance')[];
+  competitionContexts?: ('track-meet' | 'football-combine' | 'team-practice' | 'regular-season-game' | 'tournament' | 'general-training')[];
   distanceUnit?: DistanceUnit;
   testType?: string | null;
   directionPattern?: DirectionPattern;
@@ -505,7 +563,7 @@ export type WeeklyPlan = {
 
 export type SportScheduleConstraints = {
   sportPracticeDays: TrainingDay[];
-  gameOrCompetitionDays: Array<ISODateString | TrainingDay>;
+  gameOrCompetitionDays: (ISODateString | TrainingDay)[];
   currentTeamTrainingLoad: CurrentTeamTrainingLoad;
 };
 

@@ -3,9 +3,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Card, Eyebrow, ScreenTitle } from '@/components/sprint-ui';
+import { AppFooter } from '@/components/app-footer';
 import { formatTrackConditions } from '@/constants/logging';
 import { palette } from '@/constants/sprintlab';
-import { CompletedWorkoutSession, ScheduledDay, TrainingLogSummary } from '@/types';
+import { AthleteProfile, CompletedWorkoutSession, ScheduledDay, TrainingLogSummary } from '@/types';
+import { getAthleteProfile } from '@/utils/athlete-profile';
+import { deriveSeasonPhase } from '@/utils/season-engine';
 import {
   buildRecentSessions,
   buildRecoveryTrend,
@@ -32,14 +35,16 @@ export default function ProgressScreen() {
   const [logs, setLogs] = useState<TrainingLogSummary[]>([]);
   const [sessions, setSessions] = useState<CompletedWorkoutSession[]>([]);
   const [schedule, setSchedule] = useState<ScheduledDay[]>([]);
+  const [athlete, setAthlete] = useState<AthleteProfile | null>(null);
   const [selectedSeriesKey, setSelectedSeriesKey] = useState<string>();
 
   useFocusEffect(useCallback(() => {
-    Promise.all([getLogs(), getCompletedWorkoutSessions(), getWeekSchedule()])
-      .then(([savedLogs, completedSessions, savedSchedule]) => {
+    Promise.all([getLogs(), getCompletedWorkoutSessions(), getWeekSchedule(), getAthleteProfile()])
+      .then(([savedLogs, completedSessions, savedSchedule, profile]) => {
         setLogs(savedLogs);
         setSessions(completedSessions);
         setSchedule(savedSchedule);
+        setAthlete(profile);
       });
   }, []));
 
@@ -60,10 +65,21 @@ export default function ProgressScreen() {
   }, [selectedSeriesKey, sprintSeries]);
 
   const selectedSeries = sprintSeries.find(series => series.key === selectedSeriesKey);
+  const target = athlete?.targetPerformances?.[0];
+  const currentBest = target ? athlete?.personalBests.find(best => best.event === target.event) : undefined;
+  const season = athlete ? deriveSeasonPhase(athlete) : null;
 
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.page}>
     <Eyebrow>Your training data</Eyebrow>
     <ScreenTitle subtitle="See whether the plan is getting done and how your training is changing.">Progress</ScreenTitle>
+
+    {(target || season) ? <Card style={styles.directionCard}>
+      <View style={styles.directionGlow} />
+      <Eyebrow>Your direction</Eyebrow>
+      {target ? <View style={styles.targetRow}><View><Text style={styles.directionLabel}>{target.event} TARGET</Text><Text style={styles.targetValue}>{target.timeSeconds.toFixed(2)}s</Text></View><MaterialIcons name="flag" size={30} color={palette.accent} /></View> : null}
+      {currentBest ? <Text style={styles.directionCopy}>Saved personal best: {currentBest.timeSeconds.toFixed(2)}s. Progress is shown from recorded results—not a projected guarantee.</Text> : target ? <Text style={styles.directionCopy}>Record a verified performance when you have one. SprintLab will not invent a starting point.</Text> : null}
+      {season ? <View style={styles.phaseRow}><MaterialIcons name="event" size={18} color={palette.accent} /><View style={{ flex: 1 }}><Text style={styles.phaseTitle}>{season.phase.replaceAll('-', ' ')}</Text><Text style={styles.directionCopy}>{season.explanation}</Text></View></View> : null}
+    </Card> : null}
 
     <Card style={styles.weekCard}>
       <View style={styles.weekHead}>
@@ -87,6 +103,13 @@ export default function ProgressScreen() {
       <View style={styles.streakIcon}><MaterialIcons name="local-fire-department" size={25} color={palette.accent} /></View>
       <View style={{ flex: 1 }}><Text style={styles.streakValue}>{streak}</Text><Text style={styles.streakTitle}>scheduled {streak === 1 ? 'session' : 'sessions'} in a row</Text><Text style={styles.streakCopy}>Rest days never increase or break this consistency streak.</Text></View>
     </Card>
+
+    <SectionTitle title="Milestones" subtitle="Small markers for useful behavior—not extra workouts for points." />
+    <View style={styles.milestoneGrid}>
+      <Milestone icon="check-circle" title="First session" unlocked={sessions.length >= 1} />
+      <Milestone icon="history" title="Three honest logs" unlocked={logs.length >= 3} />
+      <Milestone icon="event-available" title="Week completed" unlocked={weekly.due > 0 && weekly.percentage === 100} />
+    </View>
 
     <SectionTitle title="Speed performance" subtitle="Session-best timed efforts, kept separate by distance and exercise." />
     {sprintSeries.length ? <>
@@ -115,7 +138,12 @@ export default function ProgressScreen() {
         </View>
       </View>
     </Card>) : <EmptyCard icon="history" title="No saved sessions yet" copy="Finish a workout or log a past session to begin building progress." />}
+    <AppFooter />
   </ScrollView></SafeAreaView>;
+}
+
+function Milestone({ icon, title, unlocked }: { icon: React.ComponentProps<typeof MaterialIcons>['name']; title: string; unlocked: boolean }) {
+  return <View style={[styles.milestone, unlocked && styles.milestoneUnlocked]}><MaterialIcons name={icon} size={22} color={unlocked ? palette.accent : palette.muted} /><Text style={[styles.milestoneText, unlocked && { color: palette.text }]}>{title}</Text><Text style={styles.milestoneState}>{unlocked ? 'Earned' : 'In progress'}</Text></View>;
 }
 
 function WeekDay({ day }: { day: WeekDayProgress }) {
@@ -176,6 +204,14 @@ function EmptyCard({ icon, title, copy }: { icon: keyof typeof MaterialIcons.gly
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.bg },
   page: { padding: 20, paddingBottom: 40, gap: 16, width: '100%', maxWidth: 900, alignSelf: 'center' },
+  directionCard: { gap: 13, borderColor: '#426115', backgroundColor: '#111A13', overflow: 'hidden' },
+  directionGlow: { position: 'absolute', width: 220, height: 220, borderRadius: 110, backgroundColor: palette.accent, opacity: 0.06, top: -130, right: -90 },
+  targetRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  directionLabel: { color: palette.muted, fontSize: 9, fontWeight: '900', letterSpacing: 1.2 },
+  targetValue: { color: palette.accent, fontSize: 34, fontWeight: '900', marginTop: 2 },
+  directionCopy: { color: palette.muted, fontSize: 11, lineHeight: 17 },
+  phaseRow: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', borderTopWidth: 1, borderTopColor: palette.border, paddingTop: 11 },
+  phaseTitle: { color: palette.text, fontSize: 12, fontWeight: '900', textTransform: 'capitalize', marginBottom: 3 },
   cardEyebrow: { color: palette.accent, fontWeight: '900', letterSpacing: 1.4, fontSize: 10 },
   weekCard: { gap: 15, borderColor: '#405020' },
   weekHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },
@@ -204,6 +240,11 @@ const styles = StyleSheet.create({
   streakValue: { color: palette.text, fontSize: 26, fontWeight: '900' },
   streakTitle: { color: palette.text, fontSize: 13, fontWeight: '900' },
   streakCopy: { color: palette.muted, fontSize: 10, lineHeight: 15, marginTop: 3 },
+  milestoneGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 },
+  milestone: { flex: 1, minWidth: 105, minHeight: 108, borderRadius: 16, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, padding: 13, gap: 7 },
+  milestoneUnlocked: { borderColor: '#426115', backgroundColor: '#151F10' },
+  milestoneText: { color: palette.muted, fontSize: 11, lineHeight: 15, fontWeight: '900' },
+  milestoneState: { color: palette.muted, fontSize: 8, fontWeight: '800', textTransform: 'uppercase', letterSpacing: .6 },
   sectionHead: { gap: 4, marginTop: 6 },
   sectionTitle: { color: palette.text, fontSize: 20, fontWeight: '900' },
   sectionCopy: { color: palette.muted, fontSize: 12, lineHeight: 17 },

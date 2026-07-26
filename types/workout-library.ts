@@ -11,6 +11,7 @@ export type LibraryWorkoutCategory =
   | 'tempo-recovery'
   | 'strength'
   | 'plyometrics'
+  | 'core-bodyweight'
   | 'testing'
   | 'meet-preparation'
   | 'multidirectional-acceleration'
@@ -99,7 +100,7 @@ export type LibraryWorkout = {
   eventTags: EventTag[];
   athleteLevels: LibraryAthleteLevel[];
   seasonPhases: LibrarySeasonPhase[];
-  specialistProfiles: Array<'acceleration-limited' | 'max-velocity-limited' | 'speed-endurance-limited' | 'special-endurance-limited' | 'balanced' | 'unclassified'>;
+  specialistProfiles: ('acceleration-limited' | 'max-velocity-limited' | 'speed-endurance-limited' | 'special-endurance-limited' | 'balanced' | 'unclassified')[];
   equipmentRequired: string[];
   equipmentOptional: string[];
   surface: SurfaceRequirement;
@@ -108,6 +109,7 @@ export type LibraryWorkout = {
     sprintWork: LibraryWorkoutSection;
     plyometrics: LibraryWorkoutSection;
     strength: LibraryWorkoutSection;
+    coreBodyweight: LibraryWorkoutSection;
     cooldown: LibraryWorkoutSection;
   };
   intensitySummary: string;
@@ -116,7 +118,7 @@ export type LibraryWorkout = {
   coachingCues: string[];
   modifications: string[];
   safetyNotes: string[];
-  sourceNotes: Array<{ sourceId: string; note: string }>;
+  sourceNotes: { sourceId: string; note: string }[];
   familyId: string;
   progressionLevel: number;
   regressionWorkoutId?: string;

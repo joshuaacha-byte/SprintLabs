@@ -14,7 +14,7 @@ import type {
 
 const WORKOUT_LIBRARY_KEY = 'sprintlab.workouts.v1';
 const WORKOUT_LIBRARY_SCHEMA_VERSION = 1 as const;
-const WORKOUT_LIBRARY_SEED_VERSION = 3 as const;
+const WORKOUT_LIBRARY_SEED_VERSION = 4 as const;
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const now = () => new Date().toISOString();
@@ -50,7 +50,7 @@ export function validateWorkoutForApproval(workout: LibraryWorkout) {
   if (!workout.eventPathways.length || !workout.eventTags.length || !workout.athleteLevels.length || !workout.seasonPhases.length) errors.push('At least one pathway, event, level, and phase are required.');
   if (!workout.surface.required.length) errors.push('At least one required surface is needed.');
   if (!workout.intensitySummary || !workout.recoverySummary || !workout.coachingCues.length || !workout.safetyNotes.length || !workout.sourceNotes.length) errors.push('Intensity, recovery, cues, safety notes, and a source note are required.');
-  if (Object.values(workout.sections).some(section => !section || !Array.isArray(section.items))) errors.push('All five workout sections are required.');
+  if (Object.values(workout.sections).some(section => !section || !Array.isArray(section.items))) errors.push('All six workout sections are required.');
   const calculated = calculatedWorkoutMetrics(workout);
   if (calculated.totalSprintVolumeMeters !== workout.metrics.totalSprintVolumeMeters || calculated.highIntensitySprintVolumeMeters !== workout.metrics.highIntensitySprintVolumeMeters) errors.push('Stored sprint-volume metrics do not match the section items.');
   if (workout.metrics.highCns && !workout.recoverySummary) errors.push('High-CNS sessions require recovery guidance.');
@@ -66,6 +66,21 @@ function isLegacyPlaceholder(workout: LibraryWorkout) {
   return Object.values(workout.sections).some(section => section.items.some(item => item.name === 'Curated sprint-volume record'));
 }
 
+function withSixSections(workout: LibraryWorkout, seed?: LibraryWorkout): LibraryWorkout {
+  const sections = workout.sections as Partial<LibraryWorkout['sections']>;
+  return {
+    ...workout,
+    sections: {
+      warmup: sections.warmup ?? seed?.sections.warmup ?? { id: 'warmup', label: 'Warm-up', items: [] },
+      sprintWork: sections.sprintWork ?? seed?.sections.sprintWork ?? { id: 'sprint-work', label: 'Sprint work', items: [] },
+      plyometrics: sections.plyometrics ?? seed?.sections.plyometrics ?? { id: 'plyometrics', label: 'Plyometrics', items: [] },
+      strength: sections.strength ?? seed?.sections.strength ?? { id: 'strength', label: 'Strength', items: [] },
+      coreBodyweight: sections.coreBodyweight ?? seed?.sections.coreBodyweight ?? { id: 'core-bodyweight', label: 'Core / bodyweight', items: [] },
+      cooldown: sections.cooldown ?? seed?.sections.cooldown ?? { id: 'cooldown', label: 'Cooldown', items: [] },
+    },
+  };
+}
+
 function normalizedState(raw: unknown): WorkoutLibraryState {
   if (!raw || typeof raw !== 'object') return { schemaVersion: WORKOUT_LIBRARY_SCHEMA_VERSION, seededVersion: WORKOUT_LIBRARY_SEED_VERSION, workouts: clone(starterWorkoutLibrary) };
   const candidate = raw as Partial<WorkoutLibraryState>;
@@ -73,10 +88,16 @@ function normalizedState(raw: unknown): WorkoutLibraryState {
   const existingById = new Map(existing.map(workout => [workout.id, workout]));
   const seeded = starterWorkoutLibrary.map(workout => {
     const previous = existingById.get(workout.id);
-    // Replace only the old generated placeholders. Drafts, revisions, and user edits survive.
-    return withSportMetadata(previous && !isLegacyPlaceholder(previous) ? previous : workout);
+    // Approved V1 seeds could not be silently edited, so they can safely receive
+    // the reviewed V2 protocol. Draft revisions and custom edits survive.
+    const useNewSeed = !previous
+      || isLegacyPlaceholder(previous)
+      || (previous.approvalStatus === 'approved' && (previous.version ?? 1) < workout.version);
+    return withSportMetadata(withSixSections(useNewSeed ? workout : previous, workout));
   });
-  const customWorkouts = existing.filter(workout => !starterWorkoutLibrary.some(seed => seed.id === workout.id)).map(withSportMetadata);
+  const customWorkouts = existing
+    .filter(workout => !starterWorkoutLibrary.some(seed => seed.id === workout.id))
+    .map(workout => withSportMetadata(withSixSections(workout)));
   return {
     schemaVersion: WORKOUT_LIBRARY_SCHEMA_VERSION,
     seededVersion: WORKOUT_LIBRARY_SEED_VERSION,

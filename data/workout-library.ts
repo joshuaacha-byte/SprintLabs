@@ -62,8 +62,17 @@ const catalog: CatalogEntry[] = [
   { id: 'STR-01', name: 'Foundation Sprint Strength', status: approved, category: 'strength', events: ['60m', '100m', '200m', '400m'], totalVolume: 0, highIntensityVolume: 0, duration: [45, 65], levels: ['foundation', 'developing'], equipment: ['weight room'], surfaces: ['gym'] },
   { id: 'STR-02', name: 'Sprint Power Strength', status: approved, category: 'strength', events: ['60m', '100m', '200m', '400m'], totalVolume: 0, highIntensityVolume: 0, duration: [55, 75], levels: ['trained', 'advanced'], equipment: ['weight room'], surfaces: ['gym'] },
   { id: 'STR-03', name: 'No-Gym Athletic Strength', status: approved, category: 'strength', events: ['60m', '100m', '200m', '400m'], totalVolume: 0, highIntensityVolume: 0, duration: [35, 55], equipment: ['none'], surfaces: ['home', 'turf', 'level-grass'] },
+  { id: 'STR-04', name: 'Posterior Chain + Lower-Leg Strength', status: approved, category: 'strength', events: ['60m', '100m', '200m', '400m'], totalVolume: 0, highIntensityVolume: 0, duration: [40, 60], levels: ['developing', 'trained', 'advanced'], equipment: ['dumbbells or barbell', 'sliders or towels', 'step'], surfaces: ['gym', 'home'] },
+  { id: 'STR-05', name: 'Unilateral Sprint Strength', status: approved, category: 'strength', events: ['60m', '100m', '200m', '400m'], totalVolume: 0, highIntensityVolume: 0, duration: [40, 60], levels: ['developing', 'trained', 'advanced'], equipment: ['dumbbells', 'bench or stable step'], surfaces: ['gym'] },
   { id: 'PLY-01', name: 'Landing + Pogo Foundation', status: approved, category: 'plyometrics', events: ['60m', '100m', '200m', '400m'], totalVolume: 0, highIntensityVolume: 0, duration: [35, 50], levels: ['foundation', 'developing'], equipment: ['none'], surfaces: ['gym', 'turf', 'level-grass'] },
   { id: 'PLY-02', name: 'Horizontal Elasticity', status: approved, category: 'plyometrics', events: ['60m', '100m', '200m', '400m'], totalVolume: 0, highIntensityVolume: 0, duration: [45, 60], levels: ['developing', 'trained', 'advanced'], equipment: ['mini-hurdles optional'], surfaces: ['track', 'turf', 'level-grass'] },
+  { id: 'PLY-03', name: 'Vertical Jump + Hurdle-Hop Quality', status: approved, category: 'plyometrics', events: ['60m', '100m', '200m', '400m'], totalVolume: 0, highIntensityVolume: 0, duration: [25, 40], levels: ['developing', 'trained', 'advanced'], equipment: ['low box', 'low hurdles or cones'], surfaces: ['track', 'turf', 'gym'] },
+  { id: 'PLY-04', name: 'Bounds + Single-Leg Projection', status: approved, category: 'plyometrics', events: ['60m', '100m', '200m', '400m'], totalVolume: 0, highIntensityVolume: 0, duration: [30, 45], levels: ['trained', 'advanced'], equipment: ['cones'], surfaces: ['level-grass', 'turf', 'track'] },
+  { id: 'PLY-05', name: 'Acceleration Power Jumps', status: approved, category: 'plyometrics', events: ['60m', '100m', '200m', '400m'], totalVolume: 0, highIntensityVolume: 0, duration: [25, 40], levels: ['developing', 'trained', 'advanced'], equipment: ['cones'], surfaces: ['turf', 'level-grass', 'track'] },
+  { id: 'PLY-06', name: 'Max-Velocity Elasticity Microdose', status: approved, category: 'plyometrics', events: ['60m', '100m', '200m', '400m'], totalVolume: 0, highIntensityVolume: 0, duration: [15, 25], levels: ['trained', 'advanced'], phases: ['general-preparation', 'specific-preparation', 'pre-competition'], equipment: ['low mini-hurdles or cones'], surfaces: ['track', 'turf', 'gym'] },
+  { id: 'PLY-07', name: 'Grass Elasticity Fundamentals', status: approved, category: 'plyometrics', events: ['60m', '100m', '200m', '400m'], totalVolume: 0, highIntensityVolume: 0, duration: [20, 30], levels: ['foundation', 'developing', 'trained'], phases: ['general-preparation', 'transition'], equipment: ['cones'], surfaces: ['level-grass', 'turf'] },
+  { id: 'CORE-01', name: 'Rotisserie Chicken 8-Minute Circuit', status: approved, category: 'core-bodyweight', events: ['60m', '100m', '200m', '400m'], totalVolume: 0, highIntensityVolume: 0, duration: [8, 9], levels: ['foundation', 'developing', 'trained', 'advanced'], phases: ['general-preparation', 'specific-preparation', 'pre-competition', 'competition', 'transition'], equipment: ['exercise mat optional'], surfaces: ['home', 'gym', 'turf', 'level-grass'] },
+  { id: 'CORE-02', name: 'Bodyweight Athletic Basics', status: approved, category: 'core-bodyweight', events: ['60m', '100m', '200m', '400m'], totalVolume: 0, highIntensityVolume: 0, duration: [20, 30], levels: ['foundation', 'developing', 'trained'], phases: ['general-preparation', 'specific-preparation', 'transition'], equipment: ['stable step or bench'], surfaces: ['home', 'gym', 'turf', 'level-grass'] },
   { id: 'TST-01', name: '30 m Acceleration Diagnostic', status: approved, category: 'testing', events: ['60m', '100m', '200m', '400m'], totalVolume: 90, highIntensityVolume: 90, duration: [50, 65], equipment: ['timing gates preferred', 'cones'], surfaces: ['track'] },
   { id: 'TST-02', name: 'Flying 20 Diagnostic', status: approved, category: 'testing', events: ['60m', '100m', '200m', '400m'], totalVolume: 150, highIntensityVolume: 60, duration: [55, 70], levels: ['trained', 'advanced'], equipment: ['timing gates', 'cones'], surfaces: ['track'] },
   { id: 'TST-03', name: '60 m Sprint Diagnostic', status: approved, category: 'testing', events: ['60m', '100m', '200m'], totalVolume: 150, highIntensityVolume: 150, duration: [60, 80], levels: ['trained', 'advanced'], equipment: ['starting blocks', 'timing system'], surfaces: ['track'] },
@@ -78,30 +87,16 @@ const catalog: CatalogEntry[] = [
   { id: 'ARC-02', name: 'Weekly 4 x 400 m Hard', status: archived, category: 'special-endurance', events: ['400m'], totalVolume: 1600, highIntensityVolume: 0, duration: [0, 0], levels: ['developing', 'trained', 'advanced'], phases: ['specific-preparation'], equipment: ['cones'], surfaces: ['track'] },
 ];
 
-const categoryPurpose: Record<LibraryWorkoutCategory, string> = {
-  acceleration: 'Develop projection, force application, and early sprint acceleration with high-quality recovery.',
-  'maximum-velocity': 'Practice upright sprint mechanics and fast elastic rhythm without accumulating fatigue.',
-  starts: 'Develop start setup and early-race execution with consistent technical rehearsal.',
-  'speed-endurance': 'Maintain sprint mechanics over longer fast efforts with the prescribed recovery.',
-  'special-endurance': 'Develop event-specific long-sprint quality within an appropriate phase and experience level.',
-  'tempo-recovery': 'Support rhythm, recovery, and low-intensity work capacity without turning the day into a high-CNS session.',
-  strength: 'Support sprint performance with appropriate force and power work under qualified supervision.',
-  plyometrics: 'Develop landing, stiffness, and elastic qualities while preserving organized contacts.',
-  testing: 'Create a repeatable sprint diagnostic under standardized conditions.',
-  'meet-preparation': 'Prepare for or recover from competition without adding unnecessary fatigue.',
-  'multidirectional-acceleration': 'Develop controlled first-step movement across directions.', deceleration: 'Develop organized braking and reacceleration mechanics.', 'change-of-direction': 'Practice planned directional changes with quality.', 'reactive-agility': 'Practice response-based movement under controlled conditions.', 'repeated-sprint-ability': 'Develop repeat sprint quality with appropriate recovery.', 'resisted-sprinting': 'Develop resisted acceleration without sacrificing mechanics.', 'assisted-sprint-exposure': 'Reserved for supervised assisted-speed exposure.', 'combine-preparation': 'Prepare for standardized speed and agility tests.', 'field-conditioning': 'Support field-sport conditioning without replacing skill practice.', 'court-speed': 'Develop acceleration and movement quality for court athletes.', 'explosive-power': 'Develop organized explosive power exposure.', 'sport-practice-recovery': 'Support recovery around team practice demands.', 'game-day-preparation': 'Prepare for competition without adding unnecessary fatigue.',
-};
-
 const categoryEquipment: Record<LibraryWorkoutCategory, string[]> = {
-  acceleration: ['cones'], 'maximum-velocity': ['cones'], starts: ['cones'], 'speed-endurance': ['cones'], 'special-endurance': ['cones'], 'tempo-recovery': ['none'], strength: ['weight room'], plyometrics: ['none'], testing: ['cones'], 'meet-preparation': ['cones'], 'multidirectional-acceleration': ['cones'], deceleration: ['cones'], 'change-of-direction': ['cones'], 'reactive-agility': ['cones'], 'repeated-sprint-ability': ['cones'], 'resisted-sprinting': ['sled'], 'assisted-sprint-exposure': ['specialized equipment'], 'combine-preparation': ['cones'], 'field-conditioning': ['cones'], 'court-speed': ['cones'], 'explosive-power': ['none'], 'sport-practice-recovery': ['none'], 'game-day-preparation': ['cones'],
+  acceleration: ['cones'], 'maximum-velocity': ['cones'], starts: ['cones'], 'speed-endurance': ['cones'], 'special-endurance': ['cones'], 'tempo-recovery': ['none'], strength: ['weight room'], plyometrics: ['none'], 'core-bodyweight': ['none'], testing: ['cones'], 'meet-preparation': ['cones'], 'multidirectional-acceleration': ['cones'], deceleration: ['cones'], 'change-of-direction': ['cones'], 'reactive-agility': ['cones'], 'repeated-sprint-ability': ['cones'], 'resisted-sprinting': ['sled'], 'assisted-sprint-exposure': ['specialized equipment'], 'combine-preparation': ['cones'], 'field-conditioning': ['cones'], 'court-speed': ['cones'], 'explosive-power': ['none'], 'sport-practice-recovery': ['none'], 'game-day-preparation': ['cones'],
 };
 
 const categorySurfaces: Record<LibraryWorkoutCategory, LibrarySurface[]> = {
-  acceleration: ['track'], 'maximum-velocity': ['track'], starts: ['track'], 'speed-endurance': ['track'], 'special-endurance': ['track'], 'tempo-recovery': ['level-grass', 'turf'], strength: ['gym'], plyometrics: ['gym', 'turf'], testing: ['track'], 'meet-preparation': ['track'], 'multidirectional-acceleration': ['turf'], deceleration: ['turf'], 'change-of-direction': ['turf'], 'reactive-agility': ['turf'], 'repeated-sprint-ability': ['turf'], 'resisted-sprinting': ['turf'], 'assisted-sprint-exposure': ['track'], 'combine-preparation': ['turf'], 'field-conditioning': ['turf'], 'court-speed': ['gym'], 'explosive-power': ['gym'], 'sport-practice-recovery': ['turf'], 'game-day-preparation': ['turf'],
+  acceleration: ['track'], 'maximum-velocity': ['track'], starts: ['track'], 'speed-endurance': ['track'], 'special-endurance': ['track'], 'tempo-recovery': ['level-grass', 'turf'], strength: ['gym'], plyometrics: ['gym', 'turf'], 'core-bodyweight': ['home', 'gym'], testing: ['track'], 'meet-preparation': ['track'], 'multidirectional-acceleration': ['turf'], deceleration: ['turf'], 'change-of-direction': ['turf'], 'reactive-agility': ['turf'], 'repeated-sprint-ability': ['turf'], 'resisted-sprinting': ['turf'], 'assisted-sprint-exposure': ['track'], 'combine-preparation': ['turf'], 'field-conditioning': ['turf'], 'court-speed': ['gym'], 'explosive-power': ['gym'], 'sport-practice-recovery': ['turf'], 'game-day-preparation': ['turf'],
 };
 
 const categoryPhases: Record<LibraryWorkoutCategory, LibrarySeasonPhase[]> = {
-  acceleration: ['general-preparation', 'specific-preparation', 'pre-competition'], 'maximum-velocity': ['specific-preparation', 'pre-competition', 'competition'], starts: ['general-preparation', 'specific-preparation', 'pre-competition', 'competition'], 'speed-endurance': ['specific-preparation', 'pre-competition'], 'special-endurance': ['specific-preparation', 'pre-competition'], 'tempo-recovery': ['general-preparation', 'specific-preparation', 'pre-competition', 'competition', 'taper', 'transition'], strength: ['general-preparation', 'specific-preparation', 'pre-competition'], plyometrics: ['general-preparation', 'specific-preparation', 'pre-competition'], testing: ['general-preparation', 'specific-preparation', 'pre-competition'], 'meet-preparation': ['competition', 'taper'], 'multidirectional-acceleration': ['general-preparation', 'specific-preparation', 'pre-competition'], deceleration: ['general-preparation', 'specific-preparation', 'pre-competition'], 'change-of-direction': ['general-preparation', 'specific-preparation', 'pre-competition'], 'reactive-agility': ['specific-preparation', 'pre-competition'], 'repeated-sprint-ability': ['specific-preparation', 'pre-competition'], 'resisted-sprinting': ['general-preparation', 'specific-preparation'], 'assisted-sprint-exposure': ['specific-preparation'], 'combine-preparation': ['pre-competition', 'competition'], 'field-conditioning': ['general-preparation', 'specific-preparation'], 'court-speed': ['general-preparation', 'specific-preparation', 'pre-competition'], 'explosive-power': ['general-preparation', 'specific-preparation'], 'sport-practice-recovery': ['competition', 'transition'], 'game-day-preparation': ['competition', 'taper'],
+  acceleration: ['general-preparation', 'specific-preparation', 'pre-competition'], 'maximum-velocity': ['specific-preparation', 'pre-competition', 'competition'], starts: ['general-preparation', 'specific-preparation', 'pre-competition', 'competition'], 'speed-endurance': ['specific-preparation', 'pre-competition'], 'special-endurance': ['specific-preparation', 'pre-competition'], 'tempo-recovery': ['general-preparation', 'specific-preparation', 'pre-competition', 'competition', 'taper', 'transition'], strength: ['general-preparation', 'specific-preparation', 'pre-competition'], plyometrics: ['general-preparation', 'specific-preparation', 'pre-competition'], 'core-bodyweight': ['general-preparation', 'specific-preparation', 'pre-competition', 'competition', 'transition'], testing: ['general-preparation', 'specific-preparation', 'pre-competition'], 'meet-preparation': ['competition', 'taper'], 'multidirectional-acceleration': ['general-preparation', 'specific-preparation', 'pre-competition'], deceleration: ['general-preparation', 'specific-preparation', 'pre-competition'], 'change-of-direction': ['general-preparation', 'specific-preparation', 'pre-competition'], 'reactive-agility': ['specific-preparation', 'pre-competition'], 'repeated-sprint-ability': ['specific-preparation', 'pre-competition'], 'resisted-sprinting': ['general-preparation', 'specific-preparation'], 'assisted-sprint-exposure': ['specific-preparation'], 'combine-preparation': ['pre-competition', 'competition'], 'field-conditioning': ['general-preparation', 'specific-preparation'], 'court-speed': ['general-preparation', 'specific-preparation', 'pre-competition'], 'explosive-power': ['general-preparation', 'specific-preparation'], 'sport-practice-recovery': ['competition', 'transition'], 'game-day-preparation': ['competition', 'taper'],
 };
 
 const defaultLevels: LibraryAthleteLevel[] = ['developing', 'trained', 'advanced'];
@@ -127,6 +122,7 @@ type AuthoredWorkout = {
   sprintWork?: Item[];
   plyometrics?: Item[];
   strength?: Item[];
+  coreBodyweight?: Item[];
   cooldown?: Item[];
   intensity: string;
   recovery: string;
@@ -169,6 +165,222 @@ function section(id: string, label: string, recordId: string, entries: Item[] = 
 // SprintLab Workout Library specification. These are authored records, not an
 // AI workout generator and not generic category placeholders.
 const authored: Record<string, AuthoredWorkout> = {
+  'STR-04': {
+    purpose: 'Build the hamstrings, hips, calves, soleus, and tibialis without creating soreness that ruins sprint quality.',
+    intendedAthlete: 'Sprinters who already own basic hinge and bridge patterns under coach supervision.',
+    secondaryCategories: ['core-bodyweight'],
+    levels: ['developing', 'trained', 'advanced'],
+    phases: ['general-preparation', 'specific-preparation'],
+    equipment: ['dumbbells or barbell', 'sliders or towels', 'step'],
+    surface: ['gym', 'home'],
+    warmup: [item('Strength warm-up', { durationSeconds: 600, notes: '5 min easy movement; dynamic hip/ankle mobility; trunk and glute activation; 2-4 progressively heavier technique sets for the first lift.' })],
+    plyometrics: [item('Low pogos', { sets: 2, reps: 10, notes: 'Only when the lower legs are fresh.' })],
+    strength: [
+      item('RDL', { sets: 3, reps: 6, notes: '5-6 reps.' }),
+      item('Hip thrust or long-lever bridge', { sets: 3, reps: 8, notes: '6-8 reps.' }),
+      item('Hamstring slider', { sets: 2, reps: 6, notes: '5-6 reps.' }),
+      item('Straight-knee calf raise', { sets: 2, reps: 10 }),
+      item('Bent-knee soleus raise', { sets: 2, reps: 10 }),
+      item('Tibialis raise', { sets: 2, reps: 15 }),
+    ],
+    coreBodyweight: [item('Copenhagen plank', { sets: 2, durationSeconds: 25, notes: '15-25 s per side.' })],
+    intensity: 'Leave 2-3 clean repetitions in reserve. Eccentrics are controlled, never forced.',
+    recovery: '2-3 min after RDL/hip thrust; 60-90 s for accessories.',
+    cues: ['Hips stay square; ribs stay stacked; use full controllable range.', 'Calf work is smooth, not bounced.'],
+    modifications: ['Foundation athletes use bridges instead of loaded RDLs.', 'Remove sliders/Nordics when residual hamstring soreness is present.'],
+    safety: [commonSafety, 'Do not place a new or unusually hard eccentric session within 72 hours of an important sprint or meet.'],
+    sources: ['R5', 'R6', 'R9', 'R15'],
+  },
+  'STR-05': {
+    purpose: 'Develop single-leg force, pelvic control, and upper-body posture with moderate total volume.',
+    intendedAthlete: 'Sprinters who can control split-stance and step-up patterns without knee, hip, or trunk collapse.',
+    secondaryCategories: ['core-bodyweight'],
+    levels: ['developing', 'trained', 'advanced'],
+    phases: ['general-preparation', 'specific-preparation', 'pre-competition'],
+    equipment: ['dumbbells', 'bench or stable step', 'pull-up bar or cable optional'],
+    surface: ['gym'],
+    warmup: [item('Strength warm-up', { durationSeconds: 600, notes: '5 min easy movement; dynamic hip/ankle mobility; trunk and glute activation; 2-4 progressively heavier technique sets for the first lift.' })],
+    plyometrics: [item('Standing broad jump', { sets: 3, reps: 2, notes: 'Before lifting; full reset.' })],
+    strength: [
+      item('Bulgarian split squat', { sets: 3, reps: 5, notes: 'Per side.' }),
+      item('Step-up', { sets: 2, reps: 5, notes: 'Per side.' }),
+      item('Single-leg RDL', { sets: 2, reps: 6, notes: 'Per side.' }),
+      item('Pull-up or row', { sets: 3, notes: 'Quality sets.' }),
+      item('Push-up or dumbbell bench', { sets: 3, reps: 10, notes: '6-10 reps.' }),
+    ],
+    coreBodyweight: [item('Pallof press', { sets: 2, reps: 8, notes: 'Per side.' })],
+    intensity: 'Controlled lowering and fast clean intent upward; never grind.',
+    recovery: '2-3 min for split squats; 60-120 s for remaining work.',
+    cues: ['Front foot stays planted; pelvis remains level.', 'Drive through the whole foot and finish each set with repeatable form.'],
+    modifications: ['No rear-foot elevation: use a regular split squat.', 'Pre-meet week: two work sets and no new movement variation.'],
+    safety: [commonSafety, 'Stable equipment and qualified supervision are required.'],
+    sources: ['R5', 'R6', 'R14'],
+  },
+  'PLY-03': {
+    purpose: 'Develop vertical force, landing control, and quick bilateral contacts with low total volume.',
+    intendedAthlete: 'Athletes who can land quietly and complete PLY-01 without loss of position.',
+    secondaryCategories: ['strength'],
+    levels: ['developing', 'trained', 'advanced'],
+    phases: ['general-preparation', 'specific-preparation'],
+    equipment: ['low box', 'low hurdles or cones'],
+    surface: ['track', 'turf', 'gym'],
+    warmup: lowDayWarmup(),
+    plyometrics: [
+      item('Snap-down to stick', { sets: 2, reps: 3 }),
+      item('Countermovement jump', { sets: 3, reps: 3 }),
+      item('Low hurdle hop', { sets: 3, reps: 4 }),
+      item('Pogo', { sets: 2, reps: 10 }),
+    ],
+    intensity: 'Every rep is crisp; hurdle height stays low enough to preserve contact quality.',
+    recovery: '60-90 s between low-contact sets; 2-3 min between maximal jumps.',
+    cues: ['Jump up, not into a tuck; land over the mid-foot.', 'Stop when contacts get loud or slow.'],
+    modifications: ['No hurdles: use line hops.', 'Foundation athlete uses PLY-01; never raise the hurdle to manufacture difficulty.'],
+    safety: [commonSafety, 'Do not pair with a new heavy lower-body session or place after exhaustive running.'],
+    sources: ['R13', 'R14', 'R15'],
+  },
+  'PLY-04': {
+    purpose: 'Develop horizontal projection and single-leg elastic control without chasing fatigue.',
+    intendedAthlete: 'Trained athletes with stable landing mechanics, pain-free hopping, and prior bilateral bound exposure.',
+    secondaryCategories: ['acceleration'],
+    levels: ['trained', 'advanced'],
+    phases: ['general-preparation', 'specific-preparation'],
+    equipment: ['cones'],
+    surface: ['level-grass', 'turf', 'track'],
+    warmup: lowDayWarmup(),
+    plyometrics: [
+      item('Pogo', { sets: 2, reps: 10 }),
+      item('Single-leg hop and stick', { sets: 2, reps: 3, notes: 'Per side.' }),
+      item('Straight-leg bound', { sets: 3, reps: 1, distanceMeters: 20 }),
+      item('Alternate bound', { sets: 3, reps: 1, distanceMeters: 20 }),
+    ],
+    intensity: 'High quality and submaximal-to-fast; distance never outranks posture.',
+    recovery: '60-90 s after hop-and-stick; 2-3 min between bound reps.',
+    cues: ['Project from the hip; keep pelvis level.', 'Strike beneath the body and finish while contacts remain springy.'],
+    modifications: ['Regression: PLY-02 or bilateral broad jumps.', 'Remove single-leg work when asymmetry or lower-leg irritation appears.'],
+    safety: [commonSafety, 'Surface must be level and inspected before bounding.'],
+    sources: ['R1', 'R13', 'R14'],
+  },
+  'PLY-05': {
+    purpose: 'Develop low-volume horizontal power that supports projection during acceleration.',
+    intendedAthlete: 'Athletes with controlled landings who need an acceleration-oriented jump session away from competition week.',
+    secondaryCategories: ['acceleration', 'strength'],
+    levels: ['developing', 'trained', 'advanced'],
+    phases: ['general-preparation', 'specific-preparation'],
+    equipment: ['cones', 'low box optional'],
+    surface: ['turf', 'level-grass', 'track'],
+    warmup: lowDayWarmup(),
+    plyometrics: [
+      item('Snap-down to stick', { sets: 2, reps: 3 }),
+      item('Standing broad jump', { sets: 4, reps: 2 }),
+      item('Split-stance jump', { sets: 3, reps: 3, notes: 'Per side.' }),
+      item('Low box jump', { sets: 3, reps: 2 }),
+    ],
+    strength: [item('Optional calf and tibialis raises', { sets: 2, reps: 15 })],
+    intensity: 'Powerful but repeatable; every landing is quiet and balanced.',
+    recovery: '60-90 s between snap-down/split-jump sets; 2-3 min between broad and box jumps.',
+    cues: ['Project from the hips; use the arms naturally.', 'Stick each landing before resetting.'],
+    modifications: ['Foundation option: PLY-01.', 'Remove split-stance jumps if side-to-side control differs.'],
+    safety: [commonSafety, 'Do not turn the jumps into a timed conditioning circuit.'],
+    sources: ['R13', 'R14', 'R15'],
+  },
+  'PLY-06': {
+    purpose: 'Provide a small dose of fast elastic contacts that can accompany an upright-speed day.',
+    intendedAthlete: 'Trained athletes with quiet pogo contacts and prior low-hurdle competency.',
+    secondaryCategories: ['maximum-velocity'],
+    levels: ['trained', 'advanced'],
+    phases: ['general-preparation', 'specific-preparation', 'pre-competition'],
+    equipment: ['low mini-hurdles or cones'],
+    surface: ['track', 'turf', 'gym'],
+    warmup: lowDayWarmup(),
+    plyometrics: [
+      item('Bilateral pogo', { sets: 2, reps: 10 }),
+      item('Low hurdle hop', { sets: 3, reps: 4 }),
+      item('Straight-leg bound', { sets: 2, reps: 1, distanceMeters: 20 }),
+    ],
+    intensity: 'Crisp and low volume; stop before contact time, posture, or rhythm deteriorates.',
+    recovery: '60-90 s between pogo/hurdle sets; 2-3 min between bounds.',
+    cues: ['Tall hips; contacts under the body; hurdles stay low.', 'Finish feeling springy.'],
+    modifications: ['Pre-competition: use pogos and two hurdle-hop sets only.', 'Developing athletes use PLY-03.'],
+    safety: [commonSafety, 'Do not schedule after exhaustive sprinting or inside a restricted pre-meet window.'],
+    sources: ['R13', 'R15'],
+  },
+  'PLY-07': {
+    purpose: 'Build basic ankle rhythm, landing control, and low-impact jumping competency on a forgiving surface.',
+    intendedAthlete: 'Athletes in general preparation or transition who need a low-complexity elasticity session.',
+    secondaryCategories: ['tempo-recovery'],
+    levels: ['foundation', 'developing', 'trained'],
+    phases: ['general-preparation', 'transition'],
+    equipment: ['cones', 'jump rope optional'],
+    surface: ['level-grass', 'turf'],
+    warmup: [item('Grass elasticity warm-up', { durationSeconds: 600, notes: '5 min easy movement; ankle rocks; marching; skipping; two relaxed build-ups.' })],
+    plyometrics: [
+      item('Jump rope or ankle bounce', { sets: 3, durationSeconds: 20 }),
+      item('Snap-down to stick', { sets: 3, reps: 3 }),
+      item('Pogo', { sets: 3, reps: 8 }),
+      item('Skipping for height', { sets: 3, reps: 1, distanceMeters: 20 }),
+      item('Broad jump and stick', { sets: 3, reps: 2 }),
+    ],
+    strength: [item('Optional tibialis and bent-knee calf raise', { sets: 2, reps: 15 })],
+    intensity: 'RPE 4-6/10; low contacts and clean landings.',
+    recovery: '45-75 s between low-contact sets; 2 min between broad jumps.',
+    cues: ['Stay relaxed and use the ankle like a spring.', 'Land quietly and stop while rhythm is sharp.'],
+    modifications: ['No jump rope: ankle bounce in place.', 'Remove broad jumps during transition if the athlete is not ready.'],
+    safety: [commonSafety, 'Inspect the grass for holes, wet spots, and debris.'],
+    sources: ['R7', 'R13'],
+  },
+  'CORE-01': {
+    purpose: 'Build short, repeatable trunk and bodyweight capacity by alternating face-down and face-up positions.',
+    intendedAthlete: 'Healthy athletes who want a brief add-on that supports posture without becoming a second workout.',
+    secondaryCategories: ['strength', 'tempo-recovery'],
+    levels: ['foundation', 'developing', 'trained', 'advanced'],
+    phases: ['general-preparation', 'specific-preparation', 'pre-competition', 'competition', 'transition'],
+    equipment: ['exercise mat optional'],
+    surface: ['home', 'gym', 'turf', 'level-grass'],
+    warmup: [item('Easy movement and rehearsal', { durationSeconds: 90, notes: '60-90 s easy movement plus one gentle rehearsal of the first two exercises.' })],
+    coreBodyweight: [
+      item('High-plank shoulder taps', { durationSeconds: 40, notes: 'Face down; 10 s to flip/reset.' }),
+      item('Dead bug', { durationSeconds: 40, notes: 'Face up; 10 s to flip/reset.' }),
+      item('Push-up or elevated push-up', { durationSeconds: 40, notes: 'Face down; 10 s to flip/reset.' }),
+      item('Bicycle or alternating heel taps', { durationSeconds: 40, notes: 'Face up; 10 s to flip/reset.' }),
+      item('Plank walkouts', { durationSeconds: 40, notes: 'Face down; 10 s to flip/reset.' }),
+      item('Glute-bridge march', { durationSeconds: 40, notes: 'Face up; 10 s to flip/reset.' }),
+      item('Forearm plank knee taps', { durationSeconds: 40, notes: 'Face down; 10 s to flip/reset.' }),
+      item('Bent-knee hollow or dead-bug hold', { durationSeconds: 40, notes: 'Face up; 10 s to flip/reset.' }),
+      item('Slow mountain climbers', { durationSeconds: 40, notes: 'Face down; 10 s to flip/reset.' }),
+      item('Reverse crunch or single-leg lowering', { durationSeconds: 40, notes: 'Face up; final station.' }),
+    ],
+    intensity: 'RPE 5-7/10; clean positions, never frantic.',
+    recovery: '10 s between stations. No extra round is added automatically.',
+    cues: ['Ribs stacked over pelvis; breathe continuously.', 'Move from the trunk and flip smoothly between positions.'],
+    modifications: ['Foundation: 30 s work/15 s reset and elevated push-ups.', 'Short option: stations 1-8 only; stop before form collapses.'],
+    safety: [commonSafety, 'This circuit is not a punishment finisher and never provides injury clearance.'],
+    sources: ['R16', 'R17'],
+  },
+  'CORE-02': {
+    purpose: 'Build basic push, pull, squat, split-stance, bridge, calf, and trunk capacity with simple progressions.',
+    intendedAthlete: 'Athletes who need a low-equipment strength session or a movement-competency foundation.',
+    secondaryCategories: ['strength'],
+    levels: ['foundation', 'developing', 'trained'],
+    phases: ['general-preparation', 'specific-preparation', 'transition'],
+    equipment: ['stable step or bench', 'pull-up bar or resistance band optional'],
+    surface: ['home', 'gym', 'turf', 'level-grass'],
+    warmup: [item('Athletic basics warm-up', { durationSeconds: 300, notes: '5 min easy movement; dynamic hip/ankle mobility; trunk and glute activation.' })],
+    coreBodyweight: [
+      item('Squat', { sets: 3, reps: 12, notes: '2-3 rounds; 8-12 reps.' }),
+      item('Reverse lunge', { sets: 3, reps: 6, notes: 'Per side.' }),
+      item('Push-up', { sets: 3, reps: 12, notes: '6-12 reps.' }),
+      item('Pull-up or band row', { sets: 3, reps: 8, notes: 'Pull-up 3-8 or band row 8-12.' }),
+      item('Single-leg bridge', { sets: 3, reps: 8, notes: 'Per side.' }),
+      item('Calf raise', { sets: 3, reps: 15 }),
+      item('Side plank', { sets: 3, durationSeconds: 30, notes: '20-30 s per side.' }),
+    ],
+    intensity: 'RPE 5-7/10; finish every set with 2-3 clean reps still available.',
+    recovery: '30-45 s between movements; 90 s between rounds.',
+    cues: ['Use controllable range; hips and knees track cleanly.', 'No rushed repetitions or failure sets.'],
+    modifications: ['Use elevated push-ups, assisted pull-ups, regular bridges, or supported split squats as regressions.'],
+    safety: [commonSafety, 'Use a stable adult-approved anchor for bands or rows.'],
+    sources: ['R6', 'R14', 'R16'],
+  },
   'ACC-01': { purpose: 'Build safe projection and first-step positions before longer acceleration.', intendedAthlete: 'Foundation/developing athletes learning basic start shapes.', levels: ['foundation', 'developing'], phases: ['general-preparation', 'specific-preparation'], equipment: ['wall or fence', 'cones'], surface: ['track', 'turf', 'level-grass'], warmup: sprintWarmup(), sprintWork: [sprint('Falling start', 1, 4, 10, '90-95%; deliberate projection.', '2 min between reps', 0), sprint('Two-point start', 1, 4, 10, '90-95%; deliberate projection.', '2 min between reps', 0)], plyometrics: [item('Low pogos', { sets: 2, reps: 10, notes: 'Low contacts before sprinting.' })], intensity: '90-95%; deliberate projection, not maximal straining.', recovery: '2 min between starts.', cues: ['Push the ground away; maintain a long line from head through heel.', 'Do not pop upright or reach forward.'], modifications: ['Use 6 total starts for a new athlete.', 'Replace falling starts with wall drills if positions are not organized.'], safety: [commonSafety], sources: ['R1', 'R4'] },
   'ACC-02': { purpose: 'Develop repeatable falling-start acceleration over 20 m.', intendedAthlete: 'Developing/trained sprinters who can hold an organized falling start.', levels: ['developing', 'trained'], phases: ['general-preparation', 'specific-preparation'], warmup: sprintWarmup(), sprintWork: [sprint('Falling start', 1, 6, 20, '95-100% intent.', '3 min between reps', 20)], plyometrics: [item('Pogos', { sets: 2, reps: 10 })], intensity: '95-100% intent.', recovery: '3 min between reps.', cues: ['Fall as one line; push long through the first steps.', 'Keep the shin angle and torso projection connected.'], modifications: ['Developing athlete: 4 reps.', 'No safe track: use ACC-04 only on a suitable hill.'], safety: [commonSafety], sources: ['R1', 'R4'] },
   'ACC-03': { purpose: 'Extend start quality into a 30 m acceleration.', intendedAthlete: 'Trained sprinters with consistent 20 m starts.', levels: ['trained', 'advanced'], phases: ['specific-preparation', 'pre-competition'], warmup: sprintWarmup(), sprintWork: [sprint('Three-point start', 1, 2, 10, '95-100% intent.', '3 min between reps', 10), sprint('Three-point start', 1, 4, 30, '95-100% intent.', '4-5 min between reps', 30)], plyometrics: [item('Broad jump', { sets: 3, reps: 2, notes: 'Before sprinting; land under control.' })], intensity: '95-100% intent; every rep should look like the first.', recovery: '3 min after 10 m; 4-5 min after 30 m.', cues: ['Set pressure before moving.', 'Project, then rise gradually because speed increases.'], modifications: ['Developing athlete: 3 x 20 m.', 'Use ACC-02 if start positions fade.'], safety: [commonSafety], sources: ['R1', 'R4'] },
@@ -216,10 +428,10 @@ const authored: Record<string, AuthoredWorkout> = {
 };
 
 function makeWorkout(entry: CatalogEntry): LibraryWorkout {
-  const now = '2026-07-24T00:00:00.000Z';
+  const now = '2026-07-26T00:00:00.000Z';
   const details = authored[entry.id];
   if (!details) throw new Error(`Missing authored library content for ${entry.id}`);
-  const highCns = !['tempo-recovery', 'strength'].includes(entry.category) && entry.status === 'approved';
+  const highCns = !['tempo-recovery', 'strength', 'core-bodyweight'].includes(entry.category) && entry.status === 'approved';
   return {
     id: entry.id, slug: entry.id.toLowerCase(), name: entry.name,
     purpose: details.purpose, intendedAthlete: details.intendedAthlete, primaryCategory: entry.category,
@@ -233,6 +445,7 @@ function makeWorkout(entry: CatalogEntry): LibraryWorkout {
       sprintWork: section('sprint-work', 'Sprint work', entry.id, details.sprintWork),
       plyometrics: section('plyometrics', 'Plyometrics', entry.id, details.plyometrics),
       strength: section('strength', 'Strength', entry.id, details.strength),
+      coreBodyweight: section('core-bodyweight', 'Core / bodyweight', entry.id, details.coreBodyweight),
       cooldown: section('cooldown', 'Cooldown', entry.id, details.cooldown ?? commonCooldown()),
     },
     intensitySummary: details.intensity, recoverySummary: details.recovery,
@@ -241,7 +454,7 @@ function makeWorkout(entry: CatalogEntry): LibraryWorkout {
     safetyNotes: ['Training organization only; this is not injury diagnosis or return-to-play clearance.', ...details.safety],
     sourceNotes: details.sources.map(sourceId => ({ sourceId, note: `Authored ${entry.id} library record.` })),
     familyId: entry.category, progressionLevel: (details.levels ?? entry.levels)?.includes('advanced') ? 4 : (details.levels ?? entry.levels)?.includes('trained') ? 3 : (details.levels ?? entry.levels)?.includes('developing') ? 2 : 1,
-    version: 1, approvalStatus: entry.status, createdAt: now, updatedAt: now, archivedAt: entry.status === 'archived' ? now : undefined,
+    version: 2, approvalStatus: entry.status, createdAt: now, updatedAt: now, archivedAt: entry.status === 'archived' ? now : undefined,
   };
 }
 

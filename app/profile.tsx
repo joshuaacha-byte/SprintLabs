@@ -1,75 +1,105 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
-import { CommitmentHoldButton, MultiSelectCard, OnboardingLayout, OnboardingProgress, PerformanceInput, PrimaryOnboardingButton, ProfileRevealCard, SecondaryOnboardingButton, SelectableCard, SplitGuide, SplitPose, UnitToggle } from '@/components/onboarding';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { NativeDateField, NativeTimeField } from '@/components/date-time-fields';
+import { CommitmentHoldButton, MultiSelectCard, OnboardingLayout, OnboardingProgress, PerformanceInput, PerformanceTimeWheel, PrimaryOnboardingButton, ProfileRevealCard, SecondaryOnboardingButton, SelectableCard, SplitGuide, SplitPose, UnitToggle } from '@/components/onboarding';
 import { palette } from '@/constants/sprintlab';
-import type { AgeRange, AthleteExperienceLevel, AthleteProfile, AthleteSport, CompetitionCategory, EquipmentType, PainArea, PrimaryGoal, SeasonPhase, SkillExperience, SpeedGoal, SprintEvent, TrainingDay, TrainingDemand, TrainingPlanMode } from '@/types';
+import type { AthleteExperienceLevel, AthleteProfile, AthleteSport, CompetitionStatus, EquipmentType, PainArea, RaceDevelopmentArea, SpeedGoal, SprintEvent, TrainingDay, TrainingDemand, TrainingPlanMode } from '@/types';
 import { classificationExplanation, profileSummary, splitContextLine, sportReaction } from '@/utils/onboarding-copy';
 import { clearAthleteOnboardingDraft, getAthleteOnboardingDraft, getAthleteProfile, resetAllSprintLabLocalData, resetAthleteOnboarding, saveAthleteOnboardingDraft, saveAthleteProfile } from '@/utils/athlete-profile';
+import { reminderTimeLabel, syncWorkoutReminders } from '@/utils/workout-reminders';
 
-const TOTAL_STEPS = 14;
+const TOTAL_STEPS = 17;
 const weekdays: TrainingDay[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 const events: SprintEvent[] = ['100m', '200m', '400m'];
-const sports: Array<{ value: AthleteSport; label: string }> = [
+const sports: { value: AthleteSport; label: string }[] = [
   { value: 'track-and-field', label: 'Track & field' }, { value: 'football', label: 'Football' }, { value: 'soccer', label: 'Soccer' }, { value: 'basketball', label: 'Basketball' }, { value: 'baseball', label: 'Baseball / softball' }, { value: 'lacrosse', label: 'Lacrosse' }, { value: 'rugby', label: 'Rugby' }, { value: 'volleyball', label: 'Volleyball' }, { value: 'general-athletic-performance', label: 'General speed' }, { value: 'other', label: 'Other' },
 ];
-const speedGoals: Array<{ value: SpeedGoal; label: string }> = [
+const speedGoals: { value: SpeedGoal; label: string }[] = [
   { value: 'first-step-quickness', label: 'First-step quickness' }, { value: 'acceleration', label: 'Acceleration' }, { value: 'maximum-velocity', label: 'Maximum speed' }, { value: 'multidirectional-speed', label: 'Change of direction' }, { value: 'repeated-sprint-ability', label: 'Repeated sprint ability' }, { value: 'speed-endurance', label: 'Speed endurance' }, { value: 'explosive-power', label: 'Explosive power' }, { value: 'combine-testing', label: 'Combine or testing performance' }, { value: 'track-race-performance', label: 'Track race performance' },
+];
+const raceAreas: { value: RaceDevelopmentArea; label: string; detail: string; goals: SpeedGoal[] }[] = [
+  { value: 'start-and-first-30', label: 'The start and first 30', detail: 'Reaction, projection, and early acceleration.', goals: ['acceleration', 'first-step-quickness'] },
+  { value: 'transition-to-upright', label: 'Transitioning upright', detail: 'Rising smoothly without losing momentum.', goals: ['acceleration', 'maximum-velocity'] },
+  { value: 'maximum-velocity', label: 'Holding maximum speed', detail: 'Reaching and maintaining upright sprint velocity.', goals: ['maximum-velocity'] },
+  { value: 'curve-running', label: 'Running the curve', detail: 'Positioning and rhythm in the 200m or 400m.', goals: ['track-race-performance'] },
+  { value: 'speed-endurance', label: 'Speed endurance', detail: 'Keeping mechanics together as reps or races get longer.', goals: ['speed-endurance'] },
+  { value: 'race-distribution', label: 'Race distribution', detail: 'Using effort in the right places across the race.', goals: ['track-race-performance'] },
+  { value: 'finish-under-fatigue', label: 'Finishing under fatigue', detail: 'Limiting late-race slowdown without forcing mechanics.', goals: ['speed-endurance'] },
+  { value: 'unsure', label: 'I’m not sure yet', detail: 'Start broad and learn from training and races.', goals: ['track-race-performance'] },
 ];
 
 function blankProfile(): AthleteProfile {
   const now = new Date().toISOString();
-  return { id: 'local-athlete', name: '', ageRange: '16-17', competitionCategory: 'high-school', primaryEvent: '100m', secondaryEvents: [], personalBests: [], experienceLevel: 'developing', seasonPhase: 'general-preparation', trainingDaysPerWeek: 0, availableTrainingDays: [], preferredRestDay: 'sunday', usualSessionDurationMinutes: 60, trackAccess: 'none', grassAccess: 'none', hillAccess: 'none', indoorAccess: 'none', startingBlocksAccess: 'none', weightRoomAccess: 'none', homeEquipment: [], coachInvolvement: 'none', liftingExperience: 'beginner', blockStartExperience: 'none', primaryGoal: 'build-speed', nextMeetDate: null, championshipDate: null, loggingOnlyMode: false, sport: 'track-and-field', primarySport: 'track-and-field', sports: [], sportPosition: null, speedGoals: [], competitionLevel: 'high-school', trainingContext: 'general-development', primaryPerformanceTest: null, secondaryPerformanceTests: [], sportPracticeDays: [], gameOrCompetitionDays: [], currentTeamTrainingLoad: 'unknown', courtAccess: 'none', turfAccess: 'none', sledAccess: 'none', timingGatesAccess: 'none', conesAccess: 'none', trainingPlanMode: undefined, currentPain: false, cautionAreas: [], onboardingLimitations: [], currentTrainingDemands: [], createdAt: now, updatedAt: now, onboardingComplete: false };
+  return { id: 'local-athlete', name: '', ageRange: '16-17', competitionCategory: 'high-school', primaryEvent: '100m', secondaryEvents: [], personalBests: [], experienceLevel: 'developing', seasonPhase: 'general-preparation', trainingDaysPerWeek: 0, availableTrainingDays: [], preferredRestDay: 'sunday', usualSessionDurationMinutes: 0, trackAccess: 'none', grassAccess: 'none', hillAccess: 'none', indoorAccess: 'none', startingBlocksAccess: 'none', weightRoomAccess: 'none', homeEquipment: [], coachInvolvement: 'none', liftingExperience: 'beginner', blockStartExperience: 'none', primaryGoal: 'build-speed', nextMeetDate: null, championshipDate: null, loggingOnlyMode: false, sport: 'track-and-field', primarySport: 'track-and-field', sports: [], sportPosition: null, speedGoals: [], competitionLevel: 'high-school', trainingContext: 'general-development', primaryPerformanceTest: null, secondaryPerformanceTests: [], sportPracticeDays: [], gameOrCompetitionDays: [], currentTeamTrainingLoad: 'unknown', courtAccess: 'none', turfAccess: 'none', sledAccess: 'none', timingGatesAccess: 'none', conesAccess: 'none', trainingPlanMode: undefined, currentPain: false, cautionAreas: [], onboardingLimitations: undefined, currentTrainingDemands: [], workoutReminderEnabled: false, workoutReminderHour: 16, workoutReminderMinute: 0, raceDevelopmentAreas: [], targetPerformances: [], seasonCalendar: { competitionStatus: 'unknown', priorityMeets: [] }, seasonPhaseOverride: null, createdAt: now, updatedAt: now, onboardingComplete: false, experienceAnswered: false, sportProfileAnswered: false };
 }
 
 const pretty = (value: string) => value.replaceAll('-', ' ').replace(/\b\w/g, letter => letter.toUpperCase());
 const toggle = <T,>(items: T[], value: T) => items.includes(value) ? items.filter(item => item !== value) : [...items, value];
+const trackTimeRange = (event: SprintEvent) => event === '400m'
+  ? { minimum: 35, maximum: 120, suggested: 55 }
+  : event === '200m'
+    ? { minimum: 17, maximum: 60, suggested: 24 }
+    : { minimum: 8, maximum: 30, suggested: 12 };
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const { mode } = useLocalSearchParams<{ mode?: string }>();
+  const editing = mode === 'edit';
   const [profile, setProfile] = useState<AthleteProfile>(blankProfile);
   const [step, setStep] = useState(1);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
   const update = (changes: Partial<AthleteProfile>) => setProfile(current => ({ ...current, ...changes }));
 
-  useEffect(() => { Promise.all([getAthleteOnboardingDraft(), getAthleteProfile()]).then(([draft, saved]) => { if (draft && !draft.completed) { setProfile(draft.profile); setStep(draft.currentStep); } else if (saved && !saved.onboardingComplete) setProfile(saved); else if (saved) setProfile(saved); setLoaded(true); }); }, []);
-  useEffect(() => { if (loaded && !profile.onboardingComplete) void saveAthleteOnboardingDraft({ currentStep: step, profile, completed: false }); }, [loaded, profile, step]);
+  useEffect(() => { Promise.all([getAthleteOnboardingDraft(), getAthleteProfile()]).then(([draft, saved]) => { if (!editing && draft && !draft.completed) { setProfile(draft.profile); setStep(draft.currentStep); } else if (saved) setProfile(saved); setLoaded(true); }); }, [editing]);
+  useEffect(() => { if (loaded && !editing && !profile.onboardingComplete) void saveAthleteOnboardingDraft({ currentStep: step, profile, completed: false }); }, [editing, loaded, profile, step]);
 
-  const speech = useMemo(() => step === 1 ? 'Hey, I’m Split. I’ll learn how you train and help build your speed profile.' : step === 3 ? sportReaction(profile.primarySport ?? profile.sport ?? 'track-and-field') : step === 13 ? 'I’ve got your speed profile.' : step === 14 ? 'One promise to yourself, then we can get moving.' : step > 9 ? splitContextLine(profile) : 'Answer what you know. You can update every detail later.', [profile, step]);
+  const speech = useMemo(() => step === 1 ? 'Hey, I’m Split. I’ll learn how you train and help build your speed profile.' : step === 3 ? sportReaction(profile.primarySport ?? profile.sport ?? 'track-and-field') : step === 6 ? 'A target gives the plan direction. It is a goal—not a guarantee.' : step === 10 ? splitContextLine(profile) : step === 13 ? 'Dates matter. The plan should know when hard training must give way to competition.' : step === 15 ? 'I can remind you when a planned session is coming up.' : step === 16 ? 'I’ve got your speed profile.' : step === 17 ? 'One promise to yourself, then we can get moving.' : 'Answer what you know. You can update every detail later.', [profile, step]);
   const splitPose = poseForStep(step);
   const go = (next: number) => { setError(''); setStep(Math.max(1, Math.min(TOTAL_STEPS, next))); };
   const next = () => { const message = validateStep(step, profile); if (message) return setError(message); go(step + 1); };
-  const finish = async () => { const finalProfile = await saveAthleteProfile({ ...profile, onboardingComplete: true, updatedAt: new Date().toISOString() }); await clearAthleteOnboardingDraft(); setProfile(finalProfile); Alert.alert('Profile locked in', 'Your speed profile is saved on this device. SprintLab has not created or changed a training plan.'); router.back(); };
+  const finish = async () => {
+    const finalProfile = await saveAthleteProfile({ ...profile, onboardingComplete: true, updatedAt: new Date().toISOString() });
+    const reminderResult = await syncWorkoutReminders({ profile: finalProfile, requestPermission: finalProfile.workoutReminderEnabled });
+    await clearAthleteOnboardingDraft();
+    setProfile(finalProfile);
+    const reminderNote = reminderResult.status === 'permission-denied' ? ' Notifications are off because device permission was not granted.' : '';
+    Alert.alert('Profile locked in', `Your speed profile is saved on this device.${reminderNote}`);
+    if (editing) router.back();
+    else router.replace('/');
+  };
   const reset = async () => { await resetAthleteOnboarding(); setProfile(blankProfile()); go(1); };
   const resetAll = () => Alert.alert('Reset all local SprintLab data?', 'This permanently removes this device’s profile, onboarding answers, plans, active workouts, history, progress, library edits, and saved logs. It cannot be undone.', [{ text: 'Cancel', style: 'cancel' }, { text: 'Erase all data', style: 'destructive', onPress: async () => { await resetAllSprintLabLocalData(); setProfile(blankProfile()); go(1); } }]);
   if (!loaded) return <View style={styles.loading} />;
 
-  return <OnboardingLayout>
+  return <OnboardingLayout key={step}>
     {step > 1 ? <OnboardingProgress step={step - 1} total={TOTAL_STEPS - 1} onBack={() => go(step - 1)} /> : <View style={styles.topSpacer} />}
     <SplitGuide speech={speech} pose={splitPose} prominent={step === 1 || step === 13 || step === 14} />
     <View style={styles.content}>{renderStep(step, profile, update, go)}</View>
     {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-    {step === 1 ? <PrimaryOnboardingButton title="Let’s move" onPress={() => go(2)} /> : step === 2 ? <><PrimaryOnboardingButton title={profile.name.trim() ? 'Continue' : 'Skip for now'} onPress={next} /><SecondaryOnboardingButton title="Back" onPress={() => go(1)} /></> : step === 13 ? <PrimaryOnboardingButton title="Continue" onPress={next} /> : step === 14 ? <CommitmentHoldButton onComplete={finish} /> : <PrimaryOnboardingButton title="Continue" onPress={next} />}
+    {step === 1 ? <PrimaryOnboardingButton title={editing ? 'Review profile' : 'Let’s move'} onPress={() => go(2)} /> : step === 2 ? <><PrimaryOnboardingButton title={profile.name.trim() ? 'Continue' : 'Skip for now'} onPress={next} /><SecondaryOnboardingButton title="Back" onPress={() => go(1)} /></> : step === 6 ? null : step === 16 ? <PrimaryOnboardingButton title="Continue" onPress={next} /> : step === 17 ? <CommitmentHoldButton title={editing ? 'Press and hold to save changes' : 'Press and hold to commit'} onComplete={finish} /> : <PrimaryOnboardingButton title="Continue" onPress={next} />}
     {__DEV__ ? <><Pressable onPress={reset} style={styles.reset}><Text style={styles.resetText}>Development: reset onboarding only</Text></Pressable><Pressable onPress={resetAll} style={styles.resetAll}><Text style={styles.resetAllText}>Development: erase all local app data</Text></Pressable></> : null}
   </OnboardingLayout>;
 }
 
 function renderStep(step: number, profile: AthleteProfile, update: (value: Partial<AthleteProfile>) => void, go: (step: number) => void) {
-  const sport = profile.sport ?? 'track-and-field';
   if (step === 1) return <Welcome />;
   if (step === 2) return <NameStep profile={profile} update={update} />;
   if (step === 3) return <SportsStep profile={profile} update={update} />;
   if (step === 4) return <GoalsStep profile={profile} update={update} />;
   if (step === 5) return <SportProfileStep profile={profile} update={update} />;
-  if (step === 6) return <ExperienceStep profile={profile} update={update} />;
-  if (step === 7) return <FrequencyStep profile={profile} update={update} />;
-  if (step === 8) return <DemandsStep profile={profile} update={update} />;
-  if (step === 9) return <EnvironmentStep profile={profile} update={update} />;
-  if (step === 10) return <EquipmentStep profile={profile} update={update} />;
-  if (step === 11) return <LimitationsStep profile={profile} update={update} />;
-  if (step === 12) return <ModeStep profile={profile} update={update} />;
-  if (step === 13) return <RevealStep profile={profile} go={go} />;
+  if (step === 6) return <TargetStep profile={profile} update={update} onContinue={() => go(7)} />;
+  if (step === 7) return <ExperienceStep profile={profile} update={update} />;
+  if (step === 8) return <FrequencyStep profile={profile} update={update} />;
+  if (step === 9) return <DemandsStep profile={profile} update={update} />;
+  if (step === 10) return <EnvironmentStep profile={profile} update={update} />;
+  if (step === 11) return <EquipmentStep profile={profile} update={update} />;
+  if (step === 12) return <LimitationsStep profile={profile} update={update} />;
+  if (step === 13) return <SeasonStep profile={profile} update={update} />;
+  if (step === 14) return <ModeStep profile={profile} update={update} />;
+  if (step === 15) return <ReminderStep profile={profile} update={update} />;
+  if (step === 16) return <RevealStep profile={profile} go={go} />;
   return <Question title="Training with purpose" subtitle="A small commitment to train with intention and log honestly."><Text style={styles.commitment}>I, {profile.name.trim() || 'this athlete'}, am committing to training with purpose, logging honestly, and improving one session at a time.</Text><Text style={styles.holdHint}>Hold the timer to commit</Text></Question>;
 }
 
@@ -78,12 +108,55 @@ function Question({ title, subtitle, children }: { title: string; subtitle?: str
 
 function NameStep({ profile, update }: Props) { return <Question title="What should I call you?" subtitle="A first name is optional, and stays on this device."><PerformanceInput value={profile.name} onChangeText={name => update({ name })} placeholder="First name" keyboardType="default" /></Question>; }
 function SportsStep({ profile, update }: Props) { const selected = profile.sports ?? []; const choose = (sport: AthleteSport) => { const next = selected.includes(sport) ? selected.filter(item => item !== sport) : [...selected, sport]; const primarySport = next.includes(profile.primarySport ?? profile.sport ?? sport) ? (profile.primarySport ?? profile.sport ?? sport) : next[0]; update({ sports: next, primarySport, sport: primarySport, sportPosition: null }); }; return <Question title="What are you getting faster for?" subtitle="Select every sport you train for. Then choose the main focus for this speed profile."><View style={styles.stack}>{sports.map(option => <MultiSelectCard key={option.value} label={option.label} selected={selected.includes(option.value)} onPress={() => choose(option.value)} />)}</View>{selected.length > 1 ? <><Label text="Main focus right now" /><View style={styles.chips}>{selected.map(item => <Chip key={item} label={sports.find(option => option.value === item)?.label ?? pretty(item)} selected={(profile.primarySport ?? profile.sport) === item} onPress={() => update({ primarySport: item, sport: item, sportPosition: null })} />)}</View></> : null}</Question>; }
-function GoalsStep({ profile, update }: Props) { const selected = profile.speedGoals ?? []; const choose = (goal: SpeedGoal) => { if (selected.includes(goal)) update({ speedGoals: selected.filter(item => item !== goal) }); else if (selected.length < 3) update({ speedGoals: [...selected, goal] }); }; return <Question title="What do you want to improve most?" subtitle="Choose up to three speed qualities."><Text style={styles.selectionCount}>{selected.length}/3 selected</Text><View style={styles.stack}>{speedGoals.map(option => <MultiSelectCard key={option.value} label={option.label} selected={selected.includes(option.value)} disabled={!selected.includes(option.value) && selected.length >= 3} onPress={() => choose(option.value)} />)}</View></Question>; }
+function GoalsStep({ profile, update }: Props) {
+  const sport = profile.primarySport ?? profile.sport ?? 'track-and-field';
+  if (sport === 'track-and-field') {
+    const selected = profile.raceDevelopmentAreas ?? [];
+    const choose = (area: RaceDevelopmentArea) => {
+      const next = selected.includes(area)
+        ? selected.filter(item => item !== area)
+        : area === 'unsure'
+          ? ['unsure' as RaceDevelopmentArea]
+          : selected.filter(item => item !== 'unsure').length < 2
+            ? [...selected.filter(item => item !== 'unsure'), area]
+            : selected;
+      const goals = [...new Set(next.flatMap(item => raceAreas.find(option => option.value === item)?.goals ?? []))].slice(0, 3);
+      update({ raceDevelopmentAreas: next, speedGoals: goals });
+    };
+    return <Question title="Where do you lose your races?" subtitle="Most sprinters leave time in one or two places. Name yours."><Text style={styles.selectionCount}>{selected.length}/2 selected</Text><View style={styles.stack}>{raceAreas.map(option => <MultiSelectCard key={option.value} label={option.label} detail={option.detail} selected={selected.includes(option.value)} disabled={!selected.includes(option.value) && selected.length >= 2 && option.value !== 'unsure'} onPress={() => choose(option.value)} />)}</View></Question>;
+  }
+  const selected = profile.speedGoals ?? [];
+  const choose = (goal: SpeedGoal) => { if (selected.includes(goal)) update({ speedGoals: selected.filter(item => item !== goal) }); else if (selected.length < 3) update({ speedGoals: [...selected, goal] }); };
+  return <Question title="What do you want to improve most?" subtitle="Choose up to three speed qualities."><Text style={styles.selectionCount}>{selected.length}/3 selected</Text><View style={styles.stack}>{speedGoals.map(option => <MultiSelectCard key={option.value} label={option.label} selected={selected.includes(option.value)} disabled={!selected.includes(option.value) && selected.length >= 3} onPress={() => choose(option.value)} />)}</View></Question>;
+}
 
 function SportProfileStep({ profile, update }: Props) {
   const sport = profile.primarySport ?? profile.sport ?? 'track-and-field';
   const setNum = (raw: string) => Number(raw) || undefined;
-  if (sport === 'track-and-field') return <Question title="Your track profile" subtitle="Add what you know. Every performance value is optional."><Label text="Primary event" /><View style={styles.chips}>{events.map(event => <Chip key={event} label={event} selected={profile.primaryEvent === event} onPress={() => update({ primaryEvent: event, trackProfile: { primaryEvent: event, secondaryEvents: profile.secondaryEvents, personalBests: profile.personalBests, blockStartExperience: profile.blockStartExperience, nextMeetDate: profile.nextMeetDate, championshipDate: profile.championshipDate } })} />)}</View><Label text="Secondary events" /><View style={styles.chips}>{events.filter(event => event !== profile.primaryEvent).map(event => <Chip key={event} label={event} selected={profile.secondaryEvents.includes(event)} onPress={() => update({ secondaryEvents: toggle(profile.secondaryEvents, event) })} />)}</View><PerformanceInput value={String(profile.personalBests.find(item => item.event === profile.primaryEvent)?.timeSeconds ?? '')} onChangeText={value => { const time = setNum(value); update({ personalBests: time ? [...profile.personalBests.filter(item => item.event !== profile.primaryEvent), { event: profile.primaryEvent, timeSeconds: time }] : profile.personalBests.filter(item => item.event !== profile.primaryEvent) }); }} placeholder={`${profile.primaryEvent} best time in seconds (optional)`} /></Question>;
+  if (sport === 'track-and-field') {
+    const range = trackTimeRange(profile.primaryEvent);
+    const personalBest = profile.personalBests.find(item => item.event === profile.primaryEvent)?.timeSeconds ?? null;
+    const updatePersonalBest = (time: number | null) => update({
+      personalBests: time
+        ? [...profile.personalBests.filter(item => item.event !== profile.primaryEvent), { event: profile.primaryEvent, timeSeconds: time }]
+        : profile.personalBests.filter(item => item.event !== profile.primaryEvent),
+    });
+    return <Question title="Your track profile" subtitle="Choose your main event and add a current best only if you know it. The time is optional.">
+      <Label text="Primary event" />
+      <View style={styles.chips}>{events.map(event => <Chip key={event} label={event} selected={profile.primaryEvent === event && Boolean(profile.sportProfileAnswered)} onPress={() => update({ primaryEvent: event, sportProfileAnswered: true, trackProfile: { primaryEvent: event, secondaryEvents: profile.secondaryEvents, personalBests: profile.personalBests, blockStartExperience: profile.blockStartExperience, nextMeetDate: profile.nextMeetDate, championshipDate: profile.championshipDate } })} />)}</View>
+      <Label text="Secondary events" />
+      <View style={styles.chips}>{events.filter(event => event !== profile.primaryEvent).map(event => <Chip key={event} label={event} selected={profile.secondaryEvents.includes(event)} onPress={() => update({ secondaryEvents: toggle(profile.secondaryEvents, event) })} />)}</View>
+      <PerformanceTimeWheel
+        key={`personal-best:${profile.primaryEvent}`}
+        label={`${profile.primaryEvent} current best`}
+        value={personalBest}
+        onChange={updatePersonalBest}
+        minimumSeconds={range.minimum}
+        maximumSeconds={range.maximum}
+        suggestedSeconds={range.suggested}
+      />
+    </Question>;
+  }
   if (sport === 'football') { const item = profile.footballProfile ?? {}; return <Question title="Your football profile" subtitle="Use familiar football or combine numbers only. Leave any unknown field blank."><PerformanceInput value={item.position ?? ''} onChangeText={position => update({ sportPosition: position, footballProfile: { ...item, position } })} placeholder="Position" keyboardType="default" /><PerformanceInput value={String(item.fortyYardDashTime ?? '')} onChangeText={value => update({ footballProfile: { ...item, fortyYardDashTime: setNum(value) } })} placeholder="40-yard dash in seconds (optional)" /><PerformanceInput value={String(item.verticalJump ?? '')} onChangeText={value => update({ footballProfile: { ...item, verticalJump: setNum(value) } })} placeholder="Vertical jump in inches (optional)" /><PerformanceInput value={String(item.proAgilityTime ?? '')} onChangeText={value => update({ footballProfile: { ...item, proAgilityTime: setNum(value) } })} placeholder="5-10-5 shuttle in seconds (optional)" /></Question>; }
   if (sport === 'soccer') { const item = profile.soccerProfile ?? {}; return <Question title="Your soccer profile" subtitle="Position is useful. Add a test result only if your team already tracks one."><PerformanceInput value={item.position ?? ''} onChangeText={position => update({ sportPosition: position, soccerProfile: { ...item, position } })} placeholder="Position" keyboardType="default" /><PerformanceInput value={item.repeatedSprintTest ?? ''} onChangeText={repeatedSprintTest => update({ soccerProfile: { ...item, repeatedSprintTest } })} placeholder="Known Yo-Yo, beep, or sprint-test result (optional)" keyboardType="default" /></Question>; }
   if (sport === 'basketball') { const item = profile.basketballProfile ?? {}; return <Question title="Your basketball profile" subtitle="Add familiar basketball testing numbers only—nothing is required."><PerformanceInput value={item.position ?? ''} onChangeText={position => update({ sportPosition: position, basketballProfile: { ...item, position } })} placeholder="Position" keyboardType="default" /><PerformanceInput value={String(item.verticalJump ?? '')} onChangeText={value => update({ basketballProfile: { ...item, verticalJump: setNum(value) } })} placeholder="Vertical jump in inches (optional)" /><PerformanceInput value={String(item.threeQuarterCourtSprintTime ?? '')} onChangeText={value => update({ basketballProfile: { ...item, threeQuarterCourtSprintTime: setNum(value) } })} placeholder="Three-quarter-court sprint in seconds (optional)" /><PerformanceInput value={String(item.laneAgilityTime ?? '')} onChangeText={value => update({ basketballProfile: { ...item, laneAgilityTime: setNum(value) } })} placeholder="Lane agility in seconds (optional)" /></Question>; }
@@ -92,13 +165,122 @@ function SportProfileStep({ profile, update }: Props) {
   const item = profile.generalSpeedProfile ?? {}; return <Question title="Do you have a performance result to enter?" subtitle="This is optional. Choose “Not yet” by simply continuing without adding one."><PerformanceInput value={profile.sportPosition ?? ''} onChangeText={sportPosition => update({ sportPosition })} placeholder="Position or sport focus (optional)" keyboardType="default" /><PerformanceInput value={item.testName ?? ''} onChangeText={testName => update({ generalSpeedProfile: { ...item, testName } })} placeholder="Test name, e.g. 40-yard dash (optional)" keyboardType="default" /><Text style={styles.inputHelp}>If you add a distance, choose the unit used for that exact test.</Text><PerformanceInput value={String(item.preferredTestDistance ?? '')} onChangeText={value => update({ generalSpeedProfile: { ...item, preferredTestDistance: setNum(value) } })} placeholder="Test distance (optional)" /><UnitToggle value={item.distanceUnit ?? 'meters'} onChange={distanceUnit => update({ generalSpeedProfile: { ...item, distanceUnit } })} /><PerformanceInput value={String(item.bestTestTime ?? '')} onChangeText={value => update({ generalSpeedProfile: { ...item, bestTestTime: setNum(value) } })} placeholder="Best time in seconds (optional)" /></Question>;
 }
 
-function ExperienceStep({ profile, update }: Props) { const options: Array<{ label: string; value: AthleteExperienceLevel }> = [{ label: 'Just starting', value: 'beginner' }, { label: 'Some experience', value: 'developing' }, { label: 'Consistent training', value: 'intermediate' }, { label: 'Advanced / competitive', value: 'advanced' }]; return <Question title="How experienced are you with speed training?"><View style={styles.stack}>{options.map(option => <SelectableCard key={option.value} label={option.label} selected={profile.experienceLevel === option.value} onPress={() => update({ experienceLevel: option.value })} />)}</View></Question>; }
-function FrequencyStep({ profile, update }: Props) { const custom = profile.trainingDaysPerWeek === -1; return <Question title="How many speed sessions can you realistically do each week?" subtitle="More is not always better. Pick what actually fits."><View style={styles.stack}>{[[2, '2 days — Focused'], [3, '3 days — Balanced'], [4, '4 days — High commitment'], [5, '5 days — Advanced schedule']] .map(([value, label]) => <SelectableCard key={String(value)} label={label as string} selected={profile.trainingDaysPerWeek === value} onPress={() => update({ trainingDaysPerWeek: value as number, availableTrainingDays: [] })} />)}<SelectableCard label="Choose specific days" selected={custom} onPress={() => update({ trainingDaysPerWeek: -1 })} /></View>{custom ? <><Label text="Choose your available days" /><View style={styles.chips}>{weekdays.map(day => <Chip key={day} label={day.slice(0, 3)} selected={profile.availableTrainingDays.includes(day)} onPress={() => update({ availableTrainingDays: toggle(profile.availableTrainingDays, day) })} />)}</View></> : null}</Question>; }
+function TargetStep({ profile, update, onContinue }: Props & { onContinue: () => void }) {
+  const event = profile.targetEvent ?? profile.primaryEvent;
+  const target = profile.targetPerformances?.find(item => item.event === event);
+  const updateTarget = (time: number | null) => {
+    const targets = profile.targetPerformances?.filter(item => item.event !== event) ?? [];
+    update({
+      targetEvent: event,
+      targetPerformances: time
+        ? [...targets, { event, timeSeconds: time }]
+        : targets,
+    });
+  };
+  const range = trackTimeRange(event);
+  const targetLabel = target ? `${target.timeSeconds.toFixed(2)} seconds` : '';
+  return <Question title="What are you chasing?" subtitle="Lock in a target if you have one. SprintLab uses it as direction, never as a performance promise.">
+    {(profile.primarySport ?? profile.sport) === 'track-and-field' ? <>
+      <Label text="Target event" />
+      <View style={styles.chips}>{events.map(option => <Chip key={option} label={option} selected={event === option} onPress={() => update({ targetEvent: option })} />)}</View>
+    </> : null}
+    {(profile.primarySport ?? profile.sport) === 'track-and-field' ? (
+      <PerformanceTimeWheel
+        key={`target:${event}`}
+        label={`${event} target`}
+        value={target?.timeSeconds ?? null}
+        onChange={updateTarget}
+        minimumSeconds={range.minimum}
+        maximumSeconds={range.maximum}
+        suggestedSeconds={target?.timeSeconds ?? profile.personalBests.find(item => item.event === event)?.timeSeconds ?? range.suggested}
+      />
+    ) : (
+      <PerformanceInput
+        value={String(target?.timeSeconds ?? '')}
+        onChangeText={raw => updateTarget(Number(raw) || null)}
+        placeholder="Optional target time in seconds"
+        maxLength={7}
+      />
+    )}
+    {target ? <CommitmentHoldButton title={`Hold to lock ${targetLabel}`} icon="◎" duration={900} onComplete={onContinue} /> : <PrimaryOnboardingButton title="I’m not sure yet" onPress={onContinue} />}
+    {target ? <SecondaryOnboardingButton title="Skip target for now" onPress={onContinue} /> : null}
+  </Question>;
+}
+
+function ExperienceStep({ profile, update }: Props) { const options: { label: string; value: AthleteExperienceLevel }[] = [{ label: 'Just starting', value: 'beginner' }, { label: 'Some experience', value: 'developing' }, { label: 'Consistent training', value: 'intermediate' }, { label: 'Advanced / competitive', value: 'advanced' }]; return <Question title="How experienced are you with speed training?"><View style={styles.stack}>{options.map(option => <SelectableCard key={option.value} label={option.label} selected={Boolean(profile.experienceAnswered) && profile.experienceLevel === option.value} onPress={() => update({ experienceLevel: option.value, experienceAnswered: true })} />)}</View></Question>; }
+function FrequencyStep({ profile, update }: Props) { const custom = profile.trainingDaysPerWeek === -1; return <Question title="How many speed sessions can you realistically do each week?" subtitle="More is not always better. Pick what actually fits."><View style={styles.stack}>{[[2, '2 days — Focused'], [3, '3 days — Balanced'], [4, '4 days — High commitment'], [5, '5 days — Advanced schedule']] .map(([value, label]) => <SelectableCard key={String(value)} label={label as string} selected={profile.trainingDaysPerWeek === value} onPress={() => update({ trainingDaysPerWeek: value as number, availableTrainingDays: [] })} />)}<SelectableCard label="Choose specific days" selected={custom} onPress={() => update({ trainingDaysPerWeek: -1 })} /></View>{custom ? <><Label text="Choose your available days" /><View style={styles.chips}>{weekdays.map(day => <Chip key={day} label={day.slice(0, 3)} selected={profile.availableTrainingDays.includes(day)} onPress={() => update({ availableTrainingDays: toggle(profile.availableTrainingDays, day) })} />)}</View></> : null}<Label text="Typical session length" /><View style={styles.chips}>{[45, 60, 75, 90].map(minutes => <Chip key={minutes} label={`${minutes} min`} selected={profile.usualSessionDurationMinutes === minutes} onPress={() => update({ usualSessionDurationMinutes: minutes })} />)}</View><Label text="Preferred rest day" /><View style={styles.chips}>{weekdays.map(day => <Chip key={day} label={day.slice(0, 3)} selected={profile.preferredRestDay === day} onPress={() => update({ preferredRestDay: day })} />)}</View></Question>; }
 function DemandsStep({ profile, update }: Props) { const demands = profile.currentTrainingDemands ?? []; const select = (value: TrainingDemand) => { if (value === 'none') return update({ currentTrainingDemands: demands.includes('none') ? [] : ['none'] }); const withoutNone = demands.filter(item => item !== 'none'); update({ currentTrainingDemands: withoutNone.includes(value) ? withoutNone.filter(item => item !== value) : [...withoutNone, value] }); }; const has = (demand: TrainingDemand) => demands.includes(demand); return <Question title="What else is already on your schedule?" subtitle="Select everything that is a real demand on your week. Tap a selected item again to remove it."><View style={styles.stack}>{(['team-practices', 'games-or-meets', 'weight-training', 'another-sport', 'heavy-school-schedule', 'none'] as TrainingDemand[]).map(item => <MultiSelectCard key={item} label={pretty(item)} selected={has(item)} onPress={() => select(item)} />)}</View>{has('team-practices') ? <DayChooser title="Practice days" days={profile.sportPracticeDays ?? []} onChange={sportPracticeDays => update({ sportPracticeDays })} /> : null}{has('games-or-meets') ? <DayChooser title="Game or competition days" days={(profile.gameOrCompetitionDays ?? []).filter((x): x is TrainingDay => weekdays.includes(x as TrainingDay))} onChange={gameOrCompetitionDays => update({ gameOrCompetitionDays })} /> : null}</Question>; }
-function EnvironmentStep({ profile, update }: Props) { const options: Array<[string, keyof AthleteProfile]> = [['Track', 'trackAccess'], ['Turf', 'turfAccess'], ['Grass', 'grassAccess'], ['Court', 'courtAccess'], ['Hill', 'hillAccess'], ['Indoor space', 'indoorAccess']]; return <Question title="Where can you train?" subtitle="Choose every surface or space you can use regularly."><View style={styles.stack}>{options.map(([label, field]) => <MultiSelectCard key={label} label={label} selected={profile[field] === 'regular'} onPress={() => update({ [field]: profile[field] === 'regular' ? 'none' : 'regular' } as Partial<AthleteProfile>)} />)}<MultiSelectCard label="Backyard / limited space" selected={profile.homeEquipment.includes('other')} onPress={() => update({ homeEquipment: toggle(profile.homeEquipment, 'other' as EquipmentType) })} /></View></Question>; }
-function EquipmentStep({ profile, update }: Props) { const choices: Array<[string, EquipmentType | 'sled-access' | 'gates-access']> = [['Starting blocks', 'starting-blocks'], ['Cones', 'cones'], ['Sprint sled', 'sled-access'], ['Resistance bands', 'resistance-band'], ['Timing gates', 'gates-access'], ['Full weight room', 'barbell'], ['Dumbbells', 'dumbbells'], ['No equipment', 'none']]; const selected = (value: EquipmentType | 'sled-access' | 'gates-access') => value === 'sled-access' ? profile.sledAccess === 'regular' : value === 'gates-access' ? profile.timingGatesAccess === 'regular' : value === 'barbell' ? profile.weightRoomAccess === 'regular' : profile.homeEquipment.includes(value); const choose = (value: EquipmentType | 'sled-access' | 'gates-access') => { if (value === 'sled-access') return update({ sledAccess: selected(value) ? 'none' : 'regular' }); if (value === 'gates-access') return update({ timingGatesAccess: selected(value) ? 'none' : 'regular' }); if (value === 'barbell') return update({ weightRoomAccess: selected(value) ? 'none' : 'regular' }); update({ homeEquipment: value === 'none' ? ['none'] : toggle(profile.homeEquipment.filter(item => item !== 'none'), value) }); }; return <Question title="What equipment can you use?" subtitle="Select what is genuinely available. This can be updated later."><View style={styles.stack}>{choices.map(([label, value]) => <MultiSelectCard key={label} label={label} selected={selected(value)} onPress={() => choose(value)} />)}</View></Question>; }
-function LimitationsStep({ profile, update }: Props) { const areas: Array<[string, PainArea]> = [['Hamstring sensitivity', 'hamstring'], ['Knee sensitivity', 'knee'], ['Achilles / ankle sensitivity', 'achilles'], ['Back sensitivity', 'lower-back'], ['Shoulder sensitivity', 'other'], ['Returning from time off', 'hip'], ['Coach restrictions', 'other'], ['Medical restrictions', 'other'], ['Nothing currently', 'foot']]; const current = profile.onboardingLimitations ?? []; const choose = (area: PainArea, label: string) => { if (label === 'Nothing currently') return update({ onboardingLimitations: [], cautionAreas: [], currentPain: false }); const next = toggle(current, label); const physicalAreas = areas.filter(([name]) => next.includes(name) && !['Coach restrictions', 'Medical restrictions', 'Returning from time off'].includes(name)).map(([, value]) => value); update({ onboardingLimitations: next, cautionAreas: physicalAreas, currentPain: physicalAreas.length > 0, followsCoachCreatedPlan: profile.followsCoachCreatedPlan || next.includes('Coach restrictions') }); }; return <Question title="Anything Split should plan around?" subtitle="SprintLab does not diagnose injuries or replace qualified medical care."><View style={styles.stack}>{areas.map(([label, area]) => <MultiSelectCard key={label} label={label} selected={label === 'Nothing currently' ? current.length === 0 : current.includes(label)} onPress={() => choose(area, label)} />)}</View></Question>; }
-function ModeStep({ profile, update }: Props) { const modes: Array<{ label: string; value: TrainingPlanMode; detail: string }> = [{ label: 'Build my training plan', value: 'build-my-plan', detail: 'Set up planning preferences for later.' }, { label: 'Help me follow my coach’s plan', value: 'log-coach-plan', detail: 'Focus on execution and logging.' }, { label: 'Log and analyze my training', value: 'log-coach-plan', detail: 'Keep an accurate history of what happened.' }, { label: 'A mix of all three', value: 'both', detail: 'Keep planning and logging context together.' }]; return <Question title="How should SprintLab help?" subtitle="This does not change an existing coach plan or generate a new workout today."><View style={styles.stack}>{modes.map((mode, index) => <SelectableCard key={`${mode.label}-${index}`} label={mode.label} detail={mode.detail} selected={index === 1 ? profile.trainingPlanMode === mode.value && Boolean(profile.followsCoachCreatedPlan) : index === 2 ? profile.trainingPlanMode === mode.value && profile.loggingOnlyMode && !profile.followsCoachCreatedPlan : profile.trainingPlanMode === mode.value} onPress={() => update({ trainingPlanMode: mode.value, loggingOnlyMode: index === 1 || index === 2, followsCoachCreatedPlan: index === 1 })} />)}</View></Question>; }
+function EnvironmentStep({ profile, update }: Props) { const options: [string, keyof AthleteProfile][] = [['Track', 'trackAccess'], ['Turf', 'turfAccess'], ['Grass', 'grassAccess'], ['Court', 'courtAccess'], ['Hill', 'hillAccess'], ['Indoor space', 'indoorAccess']]; return <Question title="Where can you train?" subtitle="Choose every surface or space you can use regularly."><View style={styles.stack}>{options.map(([label, field]) => <MultiSelectCard key={label} label={label} selected={profile[field] === 'regular'} onPress={() => update({ [field]: profile[field] === 'regular' ? 'none' : 'regular' } as Partial<AthleteProfile>)} />)}<MultiSelectCard label="Backyard / limited space" selected={profile.homeEquipment.includes('other')} onPress={() => update({ homeEquipment: toggle(profile.homeEquipment, 'other' as EquipmentType) })} /></View></Question>; }
+function EquipmentStep({ profile, update }: Props) {
+  const choices: [string, EquipmentType | 'sled-access' | 'gates-access'][] = [['Starting blocks', 'starting-blocks'], ['Cones', 'cones'], ['Sprint sled', 'sled-access'], ['Resistance bands', 'resistance-band'], ['Timing gates', 'gates-access'], ['Full weight room', 'barbell'], ['Dumbbells', 'dumbbells'], ['No equipment', 'none']];
+  const selected = (value: EquipmentType | 'sled-access' | 'gates-access') => value === 'sled-access'
+    ? profile.sledAccess === 'regular'
+    : value === 'gates-access'
+      ? profile.timingGatesAccess === 'regular'
+      : value === 'barbell'
+        ? profile.weightRoomAccess === 'regular'
+        : profile.homeEquipment.includes(value);
+  const withoutNoEquipment = profile.homeEquipment.filter(item => item !== 'none');
+  const choose = (value: EquipmentType | 'sled-access' | 'gates-access') => {
+    if (value === 'none') {
+      return update({
+        homeEquipment: profile.homeEquipment.includes('other') ? ['other', 'none'] : ['none'],
+        startingBlocksAccess: 'none',
+        conesAccess: 'none',
+        sledAccess: 'none',
+        timingGatesAccess: 'none',
+        weightRoomAccess: 'none',
+      });
+    }
+    if (value === 'sled-access') return update({ homeEquipment: withoutNoEquipment, sledAccess: selected(value) ? 'none' : 'regular' });
+    if (value === 'gates-access') return update({ homeEquipment: withoutNoEquipment, timingGatesAccess: selected(value) ? 'none' : 'regular' });
+    if (value === 'barbell') return update({ homeEquipment: withoutNoEquipment, weightRoomAccess: selected(value) ? 'none' : 'regular' });
+    update({ homeEquipment: toggle(withoutNoEquipment, value) });
+  };
+  return <Question title="What equipment can you use?" subtitle="Select what is genuinely available. This can be updated later."><View style={styles.stack}>{choices.map(([label, value]) => <MultiSelectCard key={label} label={label} selected={selected(value)} onPress={() => choose(value)} />)}</View></Question>;
+}
+function LimitationsStep({ profile, update }: Props) { const areas: [string, PainArea][] = [['Hamstring sensitivity', 'hamstring'], ['Knee sensitivity', 'knee'], ['Achilles / ankle sensitivity', 'achilles'], ['Back sensitivity', 'lower-back'], ['Shoulder sensitivity', 'other'], ['Returning from time off', 'hip'], ['Coach restrictions', 'other'], ['Medical restrictions', 'other'], ['Nothing currently', 'foot']]; const current = profile.onboardingLimitations ?? []; const choose = (area: PainArea, label: string) => { if (label === 'Nothing currently') return update({ onboardingLimitations: current.includes(label) ? [] : [label], cautionAreas: [], currentPain: false }); const withoutNone = current.filter(item => item !== 'Nothing currently'); const next = toggle(withoutNone, label); const physicalAreas = areas.filter(([name]) => next.includes(name) && !['Coach restrictions', 'Medical restrictions', 'Returning from time off'].includes(name)).map(([, value]) => value); update({ onboardingLimitations: next, cautionAreas: physicalAreas, currentPain: physicalAreas.length > 0, followsCoachCreatedPlan: profile.followsCoachCreatedPlan || next.includes('Coach restrictions') }); }; return <Question title="Anything Split should plan around?" subtitle="Choose every relevant item, or explicitly choose “Nothing currently.” SprintLab does not diagnose injuries or replace qualified medical care."><View style={styles.stack}>{areas.map(([label, area]) => <MultiSelectCard key={label} label={label} selected={current.includes(label)} onPress={() => choose(area, label)} />)}</View></Question>; }
+function SeasonStep({ profile, update }: Props) {
+  const calendar = profile.seasonCalendar ?? { competitionStatus: 'unknown' as CompetitionStatus, priorityMeets: [] };
+  const setCalendar = (changes: Partial<typeof calendar>) => update({ seasonCalendar: { ...calendar, ...changes } });
+  const statuses: { value: CompetitionStatus; label: string }[] = [
+    { value: 'out-of-season', label: 'Out of season' },
+    { value: 'preseason', label: 'Preseason' },
+    { value: 'in-season', label: 'In season' },
+    { value: 'postseason', label: 'Postseason' },
+  ];
+  const syncMeet = (date: string | null) => {
+    const otherMeets = calendar.priorityMeets.filter(item => !item.id.startsWith('onboarding-first-meet'));
+    setCalendar({
+      firstMeetDate: date,
+      priorityMeets: date ? [...otherMeets, { id: `onboarding-first-meet:${date}`, name: 'First competition', date, priority: 'B', events: [profile.primaryEvent], estimated: false }] : otherMeets,
+    });
+    update({ nextMeetDate: date });
+  };
+  const syncChampionship = (date: string | null) => {
+    setCalendar({ championshipDate: date });
+    update({ championshipDate: date });
+  };
+  return <Question title="What does your competition calendar look like?" subtitle="Choose the closest season status. Estimated dates are fine; SprintLab uses them to avoid placing the hardest work too close to important competition.">
+    <View style={styles.stack}>{statuses.map(status => <SelectableCard key={status.value} label={status.label} selected={calendar.competitionStatus === status.value} onPress={() => setCalendar({ competitionStatus: status.value })} />)}</View>
+    <Label text="First game or meet" />
+    <NativeDateField value={calendar.firstMeetDate} onChange={syncMeet} accessibilityLabel="Choose first game or meet date" />
+    <Label text="Championship or most important date" />
+    <NativeDateField value={calendar.championshipDate} onChange={syncChampionship} accessibilityLabel="Choose championship or most important competition date" />
+    <Text style={styles.inputHelp}>You can add named A, B, and C priority competitions later in Profile & Settings.</Text>
+  </Question>;
+}
+function ModeStep({ profile, update }: Props) { const modes: { label: string; value: TrainingPlanMode; detail: string }[] = [{ label: 'Build my training plan', value: 'build-my-plan', detail: 'Set up planning preferences for later.' }, { label: 'Help me follow my coach’s plan', value: 'log-coach-plan', detail: 'Focus on execution and logging.' }, { label: 'Log and analyze my training', value: 'log-coach-plan', detail: 'Keep an accurate history of what happened.' }, { label: 'A mix of all three', value: 'both', detail: 'Keep planning and logging context together.' }]; return <Question title="How should SprintLab help?" subtitle="This does not change an existing coach plan or generate a new workout today."><View style={styles.stack}>{modes.map((mode, index) => <SelectableCard key={`${mode.label}-${index}`} label={mode.label} detail={mode.detail} selected={index === 1 ? profile.trainingPlanMode === mode.value && Boolean(profile.followsCoachCreatedPlan) : index === 2 ? profile.trainingPlanMode === mode.value && profile.loggingOnlyMode && !profile.followsCoachCreatedPlan : profile.trainingPlanMode === mode.value} onPress={() => update({ trainingPlanMode: mode.value, loggingOnlyMode: index === 1 || index === 2, followsCoachCreatedPlan: index === 1 })} />)}</View></Question>; }
+function ReminderStep({ profile, update }: Props) {
+  const presets = [
+    { label: 'Morning', detail: '7:00 AM', hour: 7, minute: 0 },
+    { label: 'After school', detail: '4:00 PM', hour: 16, minute: 0 },
+    { label: 'Evening', detail: '6:30 PM', hour: 18, minute: 30 },
+  ];
+  const selectedTime = `${profile.workoutReminderHour ?? 16}:${profile.workoutReminderMinute ?? 0}`;
+  const presetSelected = presets.some(preset => selectedTime === `${preset.hour}:${preset.minute}`);
+  return <Question title="When should Split remind you to train?" subtitle="On workout days, the reminder previews the session name, exercise count, and estimated time. You can change this later in Settings."><View style={styles.stack}>{presets.map(preset => <SelectableCard key={preset.label} label={preset.label} detail={preset.detail} selected={Boolean(profile.workoutReminderEnabled) && selectedTime === `${preset.hour}:${preset.minute}`} onPress={() => update({ workoutReminderEnabled: true, workoutReminderHour: preset.hour, workoutReminderMinute: preset.minute })} />)}<SelectableCard label="Custom time" detail="Use your phone’s time selector." selected={Boolean(profile.workoutReminderEnabled) && !presetSelected} onPress={() => update({ workoutReminderEnabled: true, workoutReminderHour: profile.workoutReminderHour ?? 16, workoutReminderMinute: profile.workoutReminderMinute ?? 0 })} /><SelectableCard label="No workout reminders" detail="Keep notifications off for now." selected={!profile.workoutReminderEnabled} onPress={() => update({ workoutReminderEnabled: false })} /></View>{profile.workoutReminderEnabled && !presetSelected ? <><Label text="Custom reminder time" /><NativeTimeField hour={profile.workoutReminderHour ?? 16} minute={profile.workoutReminderMinute ?? 0} onChange={(workoutReminderHour, workoutReminderMinute) => update({ workoutReminderEnabled: true, workoutReminderHour, workoutReminderMinute })} /></> : null}{profile.workoutReminderEnabled ? <Text style={styles.reminderSummary}>Planned workout days at {reminderTimeLabel(profile.workoutReminderHour, profile.workoutReminderMinute)}</Text> : null}</Question>;
+}
 function RevealStep({ profile, go }: { profile: AthleteProfile; go: (step: number) => void }) { return <Question title="Your speed profile" subtitle="This is your starting context. You can edit every answer later."><ProfileRevealCard title={profile.name.trim() || 'Athlete'}><Text style={styles.revealText}>{profileSummary(profile)}</Text><Text style={styles.revealDetail}>{classificationExplanation(profile)}</Text><ProfileRow label="Goals" value={(profile.speedGoals ?? []).map(pretty).join(' · ') || 'Not selected'} /><ProfileRow label="Training" value={profile.availableTrainingDays.length ? profile.availableTrainingDays.map(day => day.slice(0, 3)).join(', ') : `${profile.trainingDaysPerWeek} sessions each week`} /><ProfileRow label="Environment" value={['trackAccess', 'grassAccess', 'courtAccess', 'hillAccess', 'indoorAccess'].filter(key => profile[key as keyof AthleteProfile] === 'regular').map(key => key.replace('Access', '')).join(', ') || 'Still to be set'} /><ProfileRow label="Equipment" value={profile.homeEquipment.filter(item => item !== 'none').map(pretty).join(', ') || 'No equipment selected'} /></ProfileRevealCard><SecondaryOnboardingButton title="Edit answers" onPress={() => go(3)} /></Question>; }
 
 function DayChooser({ title, days, onChange }: { title: string; days: TrainingDay[]; onChange: (days: TrainingDay[]) => void }) { return <View style={styles.dayChooser}><Label text={title} /><View style={styles.chips}>{weekdays.map(day => <Chip key={day} label={day.slice(0, 3)} selected={days.includes(day)} onPress={() => onChange(toggle(days, day))} />)}</View></View>; }
@@ -109,20 +291,42 @@ type Props = { profile: AthleteProfile; update: (value: Partial<AthleteProfile>)
 
 function validateStep(step: number, profile: AthleteProfile) {
   if (step === 3 && !(profile.sports?.length)) return 'Select at least one sport or speed focus.';
-  if (step === 4 && !(profile.speedGoals?.length)) return 'Choose at least one speed quality.';
-  if (step === 7 && (profile.trainingDaysPerWeek === 0 || (profile.trainingDaysPerWeek === -1 && !profile.availableTrainingDays.length))) return 'Choose a realistic weekly schedule.';
-  if (step === 12 && !profile.trainingPlanMode) return 'Choose how SprintLab should help.';
+  if (step === 4 && (profile.primarySport ?? profile.sport) === 'track-and-field' && !(profile.raceDevelopmentAreas?.length)) return 'Choose one or two race areas—or choose “I’m not sure yet.”';
+  if (step === 4 && (profile.primarySport ?? profile.sport) !== 'track-and-field' && !(profile.speedGoals?.length)) return 'Choose at least one speed quality.';
+  if (step === 5 && (profile.primarySport ?? profile.sport) === 'track-and-field' && !profile.sportProfileAnswered) return 'Choose your primary track event. Performance times can remain blank.';
+  if (step === 7 && !profile.experienceAnswered) return 'Choose your current speed-training experience.';
+  if (step === 8 && (profile.trainingDaysPerWeek === 0 || (profile.trainingDaysPerWeek === -1 && !profile.availableTrainingDays.length) || profile.usualSessionDurationMinutes <= 0)) return 'Choose a realistic weekly schedule and typical session length.';
+  if (step === 9 && !(profile.currentTrainingDemands?.length)) return 'Select the demands already on your schedule—or choose “None.”';
+  if (step === 9 && profile.currentTrainingDemands?.includes('team-practices') && !profile.sportPracticeDays?.length) return 'Choose the days that already contain team practice.';
+  if (step === 9 && profile.currentTrainingDemands?.includes('games-or-meets') && !profile.gameOrCompetitionDays?.length) return 'Choose the recurring game or competition day.';
+  if (step === 10 && !hasTrainingEnvironment(profile)) return 'Select at least one place where you can train.';
+  if (step === 11 && !hasEquipmentAnswer(profile)) return 'Select available equipment—or choose “No equipment.”';
+  if (step === 12 && !(profile.onboardingLimitations?.length)) return 'Choose any limitation Split should plan around—or choose “Nothing currently.”';
+  if (step === 13 && (profile.seasonCalendar?.competitionStatus ?? 'unknown') === 'unknown') return 'Choose your current season status so the planner does not guess.';
+  if (step === 14 && !profile.trainingPlanMode) return 'Choose how SprintLab should help.';
   return '';
+}
+
+function hasTrainingEnvironment(profile: AthleteProfile) {
+  return [profile.trackAccess, profile.turfAccess, profile.grassAccess, profile.courtAccess, profile.hillAccess, profile.indoorAccess].some(access => access === 'regular')
+    || profile.homeEquipment.includes('other');
+}
+
+function hasEquipmentAnswer(profile: AthleteProfile) {
+  return profile.homeEquipment.some(item => item !== 'other')
+    || profile.weightRoomAccess === 'regular'
+    || profile.sledAccess === 'regular'
+    || profile.timingGatesAccess === 'regular';
 }
 
 function poseForStep(step: number): SplitPose {
   if (step === 1) return 'welcome';
-  if (step === 3 || step === 4 || step === 7 || step === 9 || step === 10) return 'focused';
-  if (step === 11) return 'calm';
-  if (step === 13 || step === 14) return 'celebration';
+  if (step === 3 || step === 4 || step === 6 || step === 8 || step === 10 || step === 11 || step === 13) return 'focused';
+  if (step === 12) return 'calm';
+  if (step === 16 || step === 17) return 'celebration';
   return 'listening';
 }
 
 const styles = StyleSheet.create({
-  loading: { flex: 1, backgroundColor: palette.bg }, topSpacer: { height: 6 }, content: { gap: 16 }, welcome: { alignItems: 'center', gap: 12, paddingHorizontal: 10 }, welcomeTitle: { color: palette.text, fontSize: 30, fontWeight: '900', textAlign: 'center', letterSpacing: -0.6 }, question: { gap: 13 }, questionTitle: { color: palette.text, fontSize: 27, lineHeight: 33, fontWeight: '900', letterSpacing: -0.5 }, subtitle: { color: palette.muted, fontSize: 14, lineHeight: 20 }, selectionCount: { color: palette.accent, fontWeight: '900', fontSize: 12, alignSelf: 'flex-start', paddingVertical: 5, paddingHorizontal: 9, borderRadius: 10, backgroundColor: palette.accentDark }, inputHelp: { color: palette.muted, fontSize: 12, lineHeight: 17, marginTop: -3 }, stack: { gap: 9 }, chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, chip: { minHeight: 38, paddingHorizontal: 13, borderRadius: 11, borderWidth: 1, borderColor: palette.border, justifyContent: 'center', backgroundColor: palette.surface }, chipSelected: { borderColor: palette.accent, backgroundColor: '#18210B' }, chipText: { color: palette.muted, fontWeight: '800', fontSize: 12 }, chipTextSelected: { color: palette.accent }, label: { color: palette.text, fontSize: 12, fontWeight: '900', marginTop: 3, textTransform: 'uppercase', letterSpacing: 0.7 }, error: { color: palette.red, fontSize: 13, fontWeight: '800', textAlign: 'center' }, reset: { alignSelf: 'center', padding: 7 }, resetText: { color: palette.muted, fontSize: 11 }, resetAll: { alignSelf: 'center', padding: 7, marginBottom: 4 }, resetAllText: { color: palette.red, fontSize: 11, fontWeight: '800' }, commitment: { color: palette.text, fontSize: 21, lineHeight: 31, fontWeight: '800', padding: 16, borderWidth: 1, borderColor: palette.border, borderRadius: 18, backgroundColor: palette.surface }, holdHint: { color: palette.accent, fontSize: 13, fontWeight: '900', textAlign: 'center' }, revealText: { color: palette.text, fontSize: 16, lineHeight: 23, fontWeight: '800' }, revealDetail: { color: palette.muted, fontSize: 13, lineHeight: 19 }, profileRow: { gap: 4, borderTopWidth: 1, borderTopColor: palette.border, paddingTop: 10 }, profileLabel: { color: palette.muted, fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 0.8 }, profileValue: { color: palette.text, fontSize: 13, lineHeight: 19, fontWeight: '700' }, dayChooser: { gap: 8, paddingTop: 4 },
+  loading: { flex: 1, backgroundColor: palette.bg }, topSpacer: { height: 6 }, content: { gap: 16 }, welcome: { alignItems: 'center', gap: 12, paddingHorizontal: 10 }, welcomeTitle: { color: palette.text, fontSize: 30, fontWeight: '900', textAlign: 'center', letterSpacing: -0.6 }, question: { gap: 13 }, questionTitle: { color: palette.text, fontSize: 27, lineHeight: 33, fontWeight: '900', letterSpacing: -0.5 }, subtitle: { color: palette.muted, fontSize: 14, lineHeight: 20 }, selectionCount: { color: palette.accent, fontWeight: '900', fontSize: 12, alignSelf: 'flex-start', paddingVertical: 5, paddingHorizontal: 9, borderRadius: 10, backgroundColor: palette.accentDark }, inputHelp: { color: palette.muted, fontSize: 12, lineHeight: 17, marginTop: -3 }, stack: { gap: 9 }, chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, chip: { minHeight: 38, paddingHorizontal: 13, borderRadius: 11, borderWidth: 1, borderColor: palette.border, justifyContent: 'center', backgroundColor: palette.surface }, chipSelected: { borderColor: palette.accent, backgroundColor: '#18210B' }, chipText: { color: palette.muted, fontWeight: '800', fontSize: 12 }, chipTextSelected: { color: palette.accent }, label: { color: palette.text, fontSize: 12, fontWeight: '900', marginTop: 3, textTransform: 'uppercase', letterSpacing: 0.7 }, error: { color: palette.red, fontSize: 13, fontWeight: '800', textAlign: 'center' }, reset: { alignSelf: 'center', padding: 7 }, resetText: { color: palette.muted, fontSize: 11 }, resetAll: { alignSelf: 'center', padding: 7, marginBottom: 4 }, resetAllText: { color: palette.red, fontSize: 11, fontWeight: '800' }, commitment: { color: palette.text, fontSize: 21, lineHeight: 31, fontWeight: '800', padding: 16, borderWidth: 1, borderColor: palette.border, borderRadius: 18, backgroundColor: palette.surface }, holdHint: { color: palette.accent, fontSize: 13, fontWeight: '900', textAlign: 'center' }, reminderSummary: { color: palette.accent, fontSize: 13, lineHeight: 19, fontWeight: '900', textAlign: 'center', paddingTop: 4 }, revealText: { color: palette.text, fontSize: 16, lineHeight: 23, fontWeight: '800' }, revealDetail: { color: palette.muted, fontSize: 13, lineHeight: 19 }, profileRow: { gap: 4, borderTopWidth: 1, borderTopColor: palette.border, paddingTop: 10 }, profileLabel: { color: palette.muted, fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 0.8 }, profileValue: { color: palette.text, fontSize: 13, lineHeight: 19, fontWeight: '700' }, dayChooser: { gap: 8, paddingTop: 4 }, timeRow: { flexDirection: 'row', alignItems: 'center', gap: 10 }, timeColon: { color: palette.text, fontSize: 26, fontWeight: '900' },
 });

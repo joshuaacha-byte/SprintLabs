@@ -28,6 +28,16 @@ export function migrateAthleteProfile(raw: AthleteProfile): AthleteProfile {
   // without a `sports` field receive the safe track default.
   const sports = [...new Set(raw.sports ? raw.sports : [raw.primarySport ?? raw.sport ?? 'track-and-field'])];
   const sport = raw.primarySport ?? raw.sport ?? sports[0] ?? 'track-and-field';
+  const competitionStatus =
+    raw.trainingContext === 'in-season' || raw.seasonPhase === 'competition'
+      ? 'in-season'
+      : raw.trainingContext === 'preseason'
+        ? 'preseason'
+        : raw.trainingContext === 'postseason' || raw.seasonPhase === 'transition'
+          ? 'postseason'
+          : raw.trainingContext === 'offseason' || raw.seasonPhase === 'offseason'
+            ? 'out-of-season'
+            : 'unknown';
   return {
     ...raw,
     sport: sports.length ? sport : raw.sport,
@@ -50,6 +60,27 @@ export function migrateAthleteProfile(raw: AthleteProfile): AthleteProfile {
     currentTrainingDemands: raw.currentTrainingDemands ?? [],
     onboardingLimitations: raw.onboardingLimitations ?? [],
     turfAccess: raw.turfAccess ?? 'none',
+    workoutReminderEnabled: raw.workoutReminderEnabled ?? false,
+    workoutReminderHour: raw.workoutReminderHour ?? 16,
+    workoutReminderMinute: raw.workoutReminderMinute ?? 0,
+    raceDevelopmentAreas: raw.raceDevelopmentAreas ?? [],
+    targetPerformances: raw.targetPerformances ?? [],
+    seasonCalendar: raw.seasonCalendar ?? {
+      competitionStatus,
+      firstMeetDate: raw.nextMeetDate,
+      championshipDate: raw.championshipDate,
+      priorityMeets: raw.nextMeetDate
+        ? [{
+            id: `legacy-next-meet:${raw.nextMeetDate}`,
+            name: 'Next meet',
+            date: raw.nextMeetDate,
+            priority: 'B',
+            events: [raw.primaryEvent],
+            estimated: true,
+          }]
+        : [],
+    },
+    seasonPhaseOverride: raw.seasonPhaseOverride ?? null,
     trackProfile: raw.trackProfile ?? (sport === 'track-and-field' ? { primaryEvent: raw.primaryEvent, secondaryEvents: raw.secondaryEvents, personalBests: raw.personalBests, blockStartExperience: raw.blockStartExperience, nextMeetDate: raw.nextMeetDate, championshipDate: raw.championshipDate } : undefined),
   };
 }
@@ -77,7 +108,7 @@ export async function getAthleteOnboardingDraft(): Promise<AthleteOnboardingDraf
   const value = await AsyncStorage.getItem(ONBOARDING_KEY);
   if (!value) return null;
   const draft = JSON.parse(value) as AthleteOnboardingDraft;
-  return { ...draft, version: 1, currentStep: Math.min(14, Math.max(1, draft.currentStep || 1)), profile: migrateAthleteProfile(draft.profile) };
+  return { ...draft, version: 1, currentStep: Math.min(17, Math.max(1, draft.currentStep || 1)), profile: migrateAthleteProfile(draft.profile) };
 }
 
 export async function saveAthleteOnboardingDraft(draft: Omit<AthleteOnboardingDraft, 'version' | 'updatedAt'>) {
@@ -99,6 +130,9 @@ export async function resetAthleteOnboarding() {
 
 /** Testing-only escape hatch: removes every locally stored key owned by SprintLab. */
 export async function resetAllSprintLabLocalData() {
+  await import('@/utils/workout-reminders')
+    .then(({ disableWorkoutReminders }) => disableWorkoutReminders())
+    .catch(() => undefined);
   const keys = await AsyncStorage.getAllKeys();
   const sprintLabKeys = keys.filter(key => key.startsWith('sprintlab.'));
   if (sprintLabKeys.length) await AsyncStorage.multiRemove(sprintLabKeys);

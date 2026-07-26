@@ -228,6 +228,14 @@ export type FutureWorkoutOverride = {
   sourceTrainingLogId?: string;
 };
 
+export type PendingWorkoutLaunch = {
+  workout: PlannedWorkout;
+  source: 'library' | 'custom' | 'plan';
+  createdAt: string;
+  scheduledDate?: string;
+  scheduledDayIndex?: WeekdayIndex;
+};
+
 export type {
   AccessLevel,
   AgeRange,
@@ -242,6 +250,7 @@ export type {
   CoachInvolvement,
   CompetitionCategory,
   CompetitionLevel,
+  CompetitionStatus,
   CurrentTeamTrainingLoad,
   DirectionPattern,
   DistanceUnit,
@@ -263,13 +272,18 @@ export type {
   PainReport,
   PainSeverity,
   PersonalBest,
+  MeetPriority,
+  PriorityMeet,
   PrimaryGoal,
+  RaceDevelopmentArea,
   PerformanceStartType,
   PerformanceTest,
   ReadinessCheck,
   RepCompletionStatus,
   ScheduledWorkout,
   SeasonPhase,
+  SeasonCalendar,
+  SeasonPhaseOverride,
   SkillExperience,
   SoccerProfile,
   SpeedGoal,
@@ -299,6 +313,7 @@ export type {
   WorkoutStatus,
   ZeroToTen,
   TimingMethod,
+  TargetPerformance,
   TrackProfile,
   SprintConsistency,
 } from './domain';
@@ -323,3 +338,12 @@ export type {
   WorkoutLibraryState,
   WorkoutMetrics,
 } from './workout-library';
+
+export type {
+  PrehabArea,
+  PrehabContext,
+  PrehabEvaluation,
+  PrehabGate,
+  PrehabRecommendationCard,
+  SavedPrehabChoice,
+} from './prehab';

@@ -1,6 +1,6 @@
 # SprintLab Project Context and Handoff
 
-Last updated: July 25, 2026
+Last updated: July 26, 2026
 
 Read this document before making product or code changes. It preserves the decisions, goals, completed work, known issues, and next steps from the original planning and prototype sessions.
 
@@ -82,6 +82,8 @@ Eventually recommend sensible changes after missed sessions, schedule changes, l
 - TypeScript
 - Expo Router
 - AsyncStorage for prototype persistence
+- Expo Notifications for local workout reminders
+- Expo WebBrowser for the in-app feedback board
 - React Native Web for browser testing
 - Future iOS and Android support from one codebase
 
@@ -110,17 +112,21 @@ The Stage 1 clickable prototype exists in `/Users/joshuaacha/Desktop/sprintlab`.
 - The older compact log used by current History and Progress is now explicitly named TrainingLogSummary to distinguish it from the full domain TrainingLog
 - No existing screens were redesigned or connected to AthleteProfile/WeeklyPlan during this foundation pass
 
-### Workout Library foundation (started July 24)
+### Workout Library and season engine (updated July 26)
 
-- A separate typed Workout Library contract now distinguishes its sprint taxonomy from the prototype's older weekly-plan model: all ten library categories, approval states, event pathways/tags, athlete levels, phases, surfaces, intensity/recovery prescriptions, five structured sections, calculated volume metrics, safety/source notes, progression family, and lifecycle timestamps
-- The local `sprintlab.workouts.v1` repository persists schema/seed versions. Seed version 2 replaces only the old generated placeholder records with authored content; seed version 3 adds sport metadata while preserving revisions, drafts, and user-created workouts
-- The author-supplied starter inventory is represented with its exact catalog metadata split: 38 approved, 4 draft, and 2 archived records
+- A separate typed Workout Library contract now distinguishes its sprint taxonomy from the prototype's older weekly-plan model: approval states, event pathways/tags, athlete levels, phases, surfaces, intensity/recovery prescriptions, six structured sections, calculated volume metrics, safety/source notes, progression family, and lifecycle timestamps
+- The local `sprintlab.workouts.v1` repository persists schema/seed versions. Seed version 4 upgrades older approved starter records to the reviewed V2 content while preserving user-created drafts and edits
+- The author-supplied V2 inventory is represented with its exact catalog metadata split: 47 approved, 4 draft, and 2 archived records (53 total)
 - The Library tab supports search plus category, approval status, athlete-level, phase, pathway, event, surface, equipment, duration, and sort controls; default status is Approved
+- The primary Library view now exposes three plain-language collections with counts: **Ready to use**, **In review**, and **Archived**. Draft and archived records remain visible and recoverable but cannot be started or selected by the automatic planner.
+- An approved workout can be started immediately through the readiness gate or assigned to a chosen weekday, with replacement confirmation if that day already contains a workout.
+- Library also links directly to the weekly-plan preview and to a one-off unplanned-workout builder. A one-off session is saved to History without silently changing the recurring plan.
 - Library detail shows compatibility, metrics, all section containers, guidance, safety, sources, lifecycle status, duplicate-as-draft, archive, and restore-to-draft controls
 - Approved records cannot be silently changed; copying creates a Draft and archiving retains the record while immediately removing it from future recommendation eligibility
 - Approval validation re-computes sprint and high-intensity volume from section items, rejects missing required information, blocks assisted/downhill and advanced drop-jump approval, and checks special-endurance restrictions
-- All 44 records now contain their authored warm-up, sprint work, plyometrics, strength, cooldown, intensity, recovery, cues, modifications, safety, and source guidance. Approved-record sprint and fast-zone volumes reconcile from the structured sections; the four Draft and two Archived records intentionally preserve their document status/TBD or archived state.
-- Do not yet add a Use Workout action or selector: that comes after athlete onboarding and the deterministic eligibility/ranking rules are implemented.
+- Approved records contain authored warm-up, sprint work, plyometrics, strength, core/bodyweight, cooldown, intensity, recovery, cues, modifications, safety, and source guidance. The V2 additions include two strength records, five plyometric records, and two core/bodyweight records. The four Draft and two Archived records intentionally preserve their document status/TBD or archived state.
+- The deterministic selector now uses approved library records only. It derives a transparent season phase from competition dates, respects track event/pathway/experience/surface/equipment gates, blocks practice/game/rest days, applies meet-window restrictions, and avoids stacking high-CNS work. If season information is missing it asks for calendar context instead of silently guessing.
+- The local competition calendar stores named priority meets with date, A/B/C priority, and an estimated-date marker. An explicit season override remains available for review rather than silently replacing the calendar.
 
 ### Speed-platform architecture pass (July 24)
 
@@ -130,11 +136,24 @@ The Stage 1 clickable prototype exists in `/Users/joshuaacha/Desktop/sprintlab`.
 - `SpeedPathway`, universal performance-test/timing metadata, expanded workout-category values, sport-aware workout metadata, and `ClassificationResult` are available for the later deterministic selector
 - Workout Library filtering now includes sport, speed goal, speed pathway, and training context. Existing authored library records are safely tagged as track records when read; no unreviewed non-track prescriptions were added
 - The new local Athlete Profile route lets an athlete select sport, up to three speed goals, background, a sport-appropriate top test, and training context. It is an initial setup surface, not a plan generator
-- The Athlete Profile route now contains Split’s 14-screen conversational onboarding: welcome; name; sport; speed goals; sport-specific baseline; experience; realistic frequency; existing demands; environment; equipment; limitations; app mode; profile reveal; and a press-and-hold commitment. It auto-saves an incomplete draft locally and resumes after the app closes. Saving the completed profile clears only the draft, never a plan, workout, log, or History record
+- The Athlete Profile route now contains Split’s 17-step conversational onboarding: welcome; name; multiple sports plus one primary focus; race-development areas for track or speed goals for other athletes; sport-specific baseline; optional target performance; experience; realistic frequency plus preferred rest day; existing demands and schedule days; environment; equipment; limitations; season/competition calendar; app mode; reminder time; profile reveal; and a press-and-hold commitment. It auto-saves an incomplete draft locally and resumes after the app closes. Saving the completed profile clears only the draft, never a plan, workout, log, or History record
+- Plan-critical onboarding answers are now explicit rather than inherited from sample defaults: track athletes must choose a primary event; every athlete must choose experience, frequency, typical session length, current schedule demands, a training environment, an equipment/no-equipment answer, limitations/nothing-currently, season status, and app mode. Practice and competition demands also require weekdays so the selector can protect them.
 - Split is a local original stopwatch-guide asset with deterministic dialogue (not a live AI). The dialogue responds to sport, access, experience, coach-plan use, and team-practice load. The onboarding deliberately uses Welcome, Listening, Focused, Calm, and Celebration pose variants at relevant steps.
-- Existing local profiles migrate without deletion. They receive safe defaults for `onboardingComplete`, training demands, limitations, and turf access. A local profile with incomplete onboarding opens the profile flow; completed profiles continue directly to the existing tabs.
+- Existing local profiles migrate without deletion. They receive safe defaults for onboarding, training demands, limitations, turf access, targets, race-development areas, and season calendar. A local profile with incomplete onboarding is hard-routed into the profile flow; back gestures cannot bypass it. Completed profiles continue directly to the existing tabs.
 - The onboarding uses Expo-compatible React Native animations only. No accounts, APIs, payments, subscriptions, or workout generation were added.
 - See `docs/SPEED_PLATFORM_LANGUAGE_AUDIT.md` for the full language/data compatibility audit
+
+### Prehab, readiness, reminders, and product polish (July 26)
+
+- The prehab recommendation engine contains ten reviewed local recommendation cards and a deterministic safety gate. Sharp/worsening pain, swelling, limping, severe symptoms, medical restrictions, or an acute grab produce stop/refer guidance and no exercises. Uncertain or mild one-sided symptoms produce recovery education only. Clear or ordinary symmetrical soreness may produce no more than three optional low-cost recommendations.
+- Prehab is explicitly decision support, not diagnosis, clearance, rehabilitation, or injury prevention. Today supports viewing, saving, dismissing, and reporting symptoms. Adding a recommendation directly into an active workout remains intentionally deferred until it can also update session content and duration safely.
+- Local workout reminders can be enabled during onboarding or Settings, use presets or a custom time, and preview the scheduled session name, exercise count, and estimated duration. Team practices, competition days, and preferred rest days affect plan-day eligibility.
+- The root app now has a short SprintLab startup screen. The Expo native splash uses the SDK 54 config plugin and fade behavior; Expo Go does not exactly reproduce a release splash.
+- Settings now supports profile editing, competition-calendar management, custom reminder times, feedback, and a development-only confirmed full local-data reset.
+- Daily challenges were removed from the MVP on July 26 after device testing. The concept is intentionally paused until the core plan, training, and logging loop proves useful.
+- Progress now includes the athlete's target, known baseline, current derived training phase, and early milestones without fake projections or performance guarantees.
+- Today, Plan, Library, History, Progress, and Settings include `SprintLab prototype · Joshua Acha · 2026` plus a feedback link to `https://sprintlab.userjot.com`.
+- The interface uses layered green depth effects with native views so it remains compatible with Expo Go; no new gradient dependency was required.
 
 ### Today tab
 
@@ -355,6 +374,8 @@ Some untouched Expo starter files still exist. They are not part of the active S
 - The July 24 speed-platform architecture pass completed `npx tsc --noEmit`, `npx expo lint`, and a clean Expo web export. It added sport-aware profile migration, sport/pathway/timing contracts, universal Library filters and copy, a local Athlete Profile setup route, and the language audit without deleting local training data or adding non-track prescriptions.
 - The July 24 onboarding pass completed `npx tsc --noEmit`, `npx expo lint`, and a clean Expo web export. It adds validation, back/continue navigation, progress indicators, partial local draft persistence, resume behavior, safety acknowledgement, and final local profile saving. It does not generate a plan.
 - The July 25 selector/Settings pass completed `npx tsc --noEmit`, `npm run lint`, `git diff --check`, and a clean Expo production-web export of all 22 static routes, including the new Settings and plan-preview routes.
+- The July 26 MVP planning pass removed the paused daily-challenge experiment; added native iPhone date/time controls, PR and target-time wheels, a five-second reminder preview, reminder conflict checks, persistent prehab states, and an editable plan-preview flow with why/swap/move/remove controls. It completed `npx tsc --noEmit`, `npm run lint`, and `git diff --check` without code errors.
+- A fresh production-web export for the July 26 pass reached Metro static rendering but did not finish within the bounded verification window on the 2017 iMac. It was stopped without reporting a bundle error; the new native date/time and notification behaviors still require the iPhone checklist below.
 - Responsive source review confirmed centered maximum-width containers on onboarding, Today, Plan, Readiness, Workout, Log, Progress, Settings, and plan preview. The production bundle could not be interacted with through the isolated in-app browser because that browser could not reach the Mac's localhost server; a final phone/tablet visual walkthrough remains a manual device check rather than a claimed automated pass.
 
 The owner should still confirm the same persistence loop once in Expo Go on the iPhone:
@@ -383,9 +404,9 @@ The 2017 Intel iMac builds slowly. Clean web bundles have taken several minutes,
 
 ## Known development issues
 
-### iPhone cannot reach Metro over LAN
+### iPhone/Metro connection history
 
-Expo Go repeatedly failed to reach the Mac development server over normal Wi-Fi and the iPhone Personal Hotspot. Safari on the iPhone also could not reach the Metro URL. The macOS firewall was reportedly off, and Expo Go local-network permission was enabled.
+Expo Go previously failed to reach the Mac development server over normal Wi-Fi, and tunnel mode repeatedly timed out. The app has since been opened and tested successfully on the user's phone. Treat connectivity as intermittent development-environment behavior rather than an application-code failure.
 
 Tunnel mode is also unusable at present:
 
@@ -395,7 +416,7 @@ CommandError: ngrok tunnel took too long to connect.
 
 `@expo/ngrok` was installed successfully, so the remaining tunnel failure is connectivity rather than a missing tunnel package.
 
-Until this is diagnosed, use the web build on the Mac. Do not confuse `npx expo start --web` with a phone-compatible Metro session. Expo Go cannot connect to the web-only session.
+Use the normal Expo server for Expo Go and `npx expo start --web` only for browser checks. If LAN access fails again, first verify that the current Metro server is running and use the active network-interface address; do not keep retrying ngrok indefinitely.
 
 Possible later diagnostics include verifying the actual active network-interface IP, comparing it with the IP embedded in Expo’s QR code, and forcing the correct packager hostname if Expo selects the wrong interface.
 
@@ -474,15 +495,17 @@ TestFlight belongs in private beta, not the initial prototype. It requires the p
 
 ## Immediate next steps
 
-1. On the iPhone, test Thursday/Friday/another current day against Plan, then test Readiness → Start → extra rep/set/exercise → Review → Save → History/Progress and restart the app to confirm persistence.
-2. Use the prototype during a real workout and record friction or missing information.
-3. Test Profile & Settings, edit-profile return behavior, and the full local-data reset on a throwaway device/browser state.
-4. Review and save one deterministic track week, then confirm Today follows the correct saved weekday and the plan remains editable afterward.
-5. Add dated meet-window logic and recent completed-session/high-CNS history to the selector before calling it adaptive; the current selector builds a recurring profile-based week and does not yet rewrite it from readiness or recent logs.
-6. Add lightweight capture controls for surface, starting method, footwear, weather, and numeric pain severity instead of leaving those fields unknown.
-7. Add reusable user-authored workout templates. Training History already includes date-specific duplicate-session actions.
-8. After several real sessions exist, review whether the Progress series and recovery trends answer useful training questions without extra logging burden.
-9. Add Supabase only after the personal workflow is proven.
+1. On a throwaway local state, complete the required onboarding branches, confirm the native seconds/hundredths PR and target wheels, close and reopen mid-onboarding to verify resume, and confirm tabs cannot be reached until the final commitment.
+2. Manually test all three Library collections: start one approved workout, add another to an empty weekday, replace a populated weekday after confirmation, archive/restore a disposable draft, and confirm Draft/Archived workouts never appear in automatic suggestions.
+3. Create and complete one unplanned workout, then verify that it appears in History without altering the recurring week.
+4. In Settings, add A/B/C meets with the native date picker, practice/game weekdays, a preferred rest day, and a custom native reminder time. Run the five-second notification test, generate and save a week, then verify no session lands on a protected day and Today follows the saved weekday.
+5. Test a green-readiness day, a skipped check-in, and a pain/red-flag day. Confirm the Recovery & prehab panel always explains its state, red flags show no exercises, and optional cards can be viewed, saved, and dismissed.
+6. Complete a real session from Readiness → Workout → Review → History → Progress, then restart the app to verify local persistence.
+7. Add the same prehab panel to Workout Detail and design a safe `Add to session` action that updates the active snapshot, estimated duration, and History record together.
+8. Add recent completed-session/high-CNS history and missed-session proposals to the selector before calling the system adaptive.
+9. Add lightweight capture controls for surface, starting method, footwear, weather, and numeric pain severity instead of leaving those fields unknown.
+10. Add reusable user-authored workout templates. Training History already includes date-specific duplicate-session actions.
+11. Use the prototype during several real workouts and record friction through the UserJot feedback board before adding Supabase, AI, accounts, or payments.
 
 ## Instructions for the next Codex session
 

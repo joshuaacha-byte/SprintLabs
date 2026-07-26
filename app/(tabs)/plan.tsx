@@ -1,13 +1,15 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useCallback, useState } from 'react';
-import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Card, Eyebrow, ScreenTitle } from '@/components/sprint-ui';
+import { AppFooter } from '@/components/app-footer';
 import { palette } from '@/constants/sprintlab';
 import { defaultWeekSchedule } from '@/data/workouts';
 import { AthleteProfile, ScheduledDay, WeekdayIndex } from '@/types';
 import { getAthleteProfile } from '@/utils/athlete-profile';
 import { getWeekSchedule, markDayAsRest, swapScheduledDays } from '@/utils/storage';
+import { prepareWorkoutLaunch } from '@/utils/workout-launch';
 
 export default function PlanScreen() {
   const router = useRouter();
@@ -39,6 +41,24 @@ export default function PlanScreen() {
     await swapScheduledDays(selected, target);
     setChoosingMoveTarget(false);
     await loadSchedule();
+  };
+  const startPlanned = async (day: ScheduledDay) => {
+    if (!day.workout) return;
+    if (day.dayIndex !== todayIndex) {
+      return Alert.alert(
+        `Start ${day.fullLabel}’s workout today?`,
+        'It will be recorded as a one-off session today. Your weekly plan will stay unchanged.',
+        [{ text: 'Cancel', style: 'cancel' }, { text: 'Start today', onPress: () => void launch(day, false) }],
+      );
+    }
+    await launch(day, true);
+  };
+  const launch = async (day: ScheduledDay, scheduled: boolean) => {
+    if (!day.workout) return;
+    const result = await prepareWorkoutLaunch(day.workout, 'plan', scheduled ? { scheduledDate: new Date().toLocaleDateString('en-CA'), scheduledDayIndex: day.dayIndex } : undefined);
+    if (result === 'active-session') return Alert.alert('Workout already in progress', 'Finish or discard the active workout before starting another.', [{ text: 'Open workout', onPress: () => router.push('/workout') }]);
+    if (result === 'readiness-required') router.push({ pathname: '/readiness', params: { launch: 'pending' } });
+    else router.push('/workout');
   };
 
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.page}>
@@ -81,6 +101,7 @@ export default function PlanScreen() {
             {day.kind === 'workout' && day.workout ? <>
               <Text style={styles.expandedText}>{day.workout.purpose}</Text>
               <View style={styles.actions}>
+                <Pressable onPress={() => startPlanned(day)} style={styles.startAction}><MaterialIcons name="play-arrow" size={18} color="#0B1000" /><Text style={styles.startActionText}>{isToday ? 'Start today’s session' : 'Start today'}</Text></Pressable>
                 <Pressable onPress={() => editDay(day.dayIndex)} style={styles.primaryAction}><MaterialIcons name="edit" size={17} color={palette.accent} /><Text style={styles.primaryActionText}>Edit session</Text></Pressable>
                 <Pressable onPress={() => setChoosingMoveTarget(value => !value)} style={styles.secondaryAction}><Text style={styles.secondaryActionText}>Move</Text></Pressable>
                 <Pressable onPress={() => markRest(day.dayIndex)} style={styles.secondaryAction}><Text style={styles.restActionText}>Make rest day</Text></Pressable>
@@ -102,6 +123,7 @@ export default function PlanScreen() {
         </Card>
       </Pressable>;
     })}
+    <AppFooter />
   </ScrollView></SafeAreaView>;
 }
 
@@ -131,6 +153,8 @@ const styles = StyleSheet.create({
   expandedText: { color: palette.muted, lineHeight: 19, fontSize: 12 },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   primaryAction: { minHeight: 42, paddingHorizontal: 14, borderRadius: 12, backgroundColor: palette.accentDark, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center' },
+  startAction: { minHeight: 42, paddingHorizontal: 14, borderRadius: 12, backgroundColor: palette.accent, flexDirection: 'row', gap: 5, alignItems: 'center', justifyContent: 'center' },
+  startActionText: { color: '#0B1000', fontWeight: '900', fontSize: 12 },
   primaryActionText: { color: palette.accent, fontWeight: '900', fontSize: 12 },
   secondaryAction: { minHeight: 42, paddingHorizontal: 13, borderRadius: 12, backgroundColor: palette.surface2, alignItems: 'center', justifyContent: 'center' },
   secondaryActionText: { color: palette.text, fontWeight: '800', fontSize: 12 },

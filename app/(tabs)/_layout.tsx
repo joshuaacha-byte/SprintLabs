@@ -10,7 +10,7 @@ export default function TabLayout() {
   const router = useRouter();
   useEffect(() => {
     void getAthleteProfile().then(profile => {
-      if (!profile?.onboardingComplete) router.push('/profile');
+      if (!profile?.onboardingComplete) router.replace('/profile');
     });
   }, [router]);
   return <Tabs screenOptions={({ route }) => ({

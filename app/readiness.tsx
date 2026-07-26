@@ -1,7 +1,7 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useCallback, useMemo, useState } from 'react';
 import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Card, Eyebrow, PrimaryButton, ScreenTitle } from '@/components/sprint-ui';
 import { palette } from '@/constants/sprintlab';
 import { ReadinessDecision, ReadinessLocation, ReadinessSensation } from '@/types';
@@ -11,7 +11,7 @@ import {
   readinessLevelMeta,
   sensationLabels,
 } from '@/utils/readiness';
-import { getReadiness, saveReadiness } from '@/utils/storage';
+import { clearPendingWorkoutLaunch, getPendingWorkoutLaunch, getReadiness, saveReadiness, startWorkoutSession } from '@/utils/storage';
 
 const dateKey = () => new Date().toLocaleDateString('en-CA');
 const levelColors = { green: palette.accent, yellow: palette.orange, red: palette.red } as const;
@@ -40,6 +40,7 @@ function Choice<T extends string | boolean>({ value, options, onChange }: { valu
 
 export default function ReadinessScreen() {
   const router = useRouter();
+  const { launch } = useLocalSearchParams<{ launch?: string }>();
   const [sleep, setSleep] = useState('');
   const [sleepQuality, setSleepQuality] = useState(0);
   const [neuralReadiness, setNeuralReadiness] = useState(0);
@@ -95,19 +96,32 @@ export default function ReadinessScreen() {
   } : null, [valid, sleepNumber, sleepQuality, neuralReadiness, focus, fuelHydrated, soreness, hasLocalizedIssue, sensation, location, otherLocationDetail, hesitatesAtMaxEffort, painNotes]);
 
   const evaluation = useMemo(() => draft ? evaluateReadiness(draft) : null, [draft]);
+  const finishCheckIn = async (decision: ReadinessDecision) => {
+    await saveReadiness(decision);
+    if (launch !== 'pending') return router.back();
+    const pending = await getPendingWorkoutLaunch();
+    if (!pending) return router.replace('/');
+    await startWorkoutSession(
+      pending.workout,
+      decision,
+      pending.scheduledDate && pending.scheduledDayIndex !== undefined
+        ? { scheduledDate: pending.scheduledDate, scheduledDayIndex: pending.scheduledDayIndex }
+        : undefined,
+    );
+    await clearPendingWorkoutLaunch();
+    router.replace('/workout');
+  };
   const save = async () => {
     if (!draft || !evaluation) return;
-    await saveReadiness({
+    await finishCheckIn({
       ...draft,
       readinessLevel: evaluation.level,
       readinessReasons: evaluation.reasons,
       readinessGuidance: evaluation.guidance,
     });
-    router.back();
   };
   const skip = async () => {
-    await saveReadiness({ date: dateKey(), status: 'skipped', painNotes: '' });
-    router.back();
+    await finishCheckIn({ date: dateKey(), status: 'skipped', painNotes: '' });
   };
 
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
