@@ -2,10 +2,12 @@ import type {
   FootwearType,
   PainSeverity,
   PainReport,
+  SprintEvent,
   StartingMethod,
   TrainingLog as DomainTrainingLog,
   TrainingSurface,
   WeatherConditions,
+  WorkoutCategory,
 } from './domain';
 
 export type ExerciseTracking =
@@ -42,6 +44,8 @@ export type PlannedWorkout = {
   title: string;
   purpose: string;
   durationMinutes: number;
+  category?: WorkoutCategory;
+  eventTags?: SprintEvent[];
   sections: PlannedWorkoutSection[];
 };
 
@@ -72,6 +76,9 @@ export type ReadinessLocation =
   | 'foot-ankle'
   | 'other';
 
+export type ReadinessFuelStatus = 'normal' | 'fasted-usual' | 'underfueled';
+export type WarmupReassessment = 'better' | 'same' | 'worse';
+
 export type ReadinessDecision = {
   date: string;
   status: 'completed' | 'skipped';
@@ -79,6 +86,8 @@ export type ReadinessDecision = {
   sleepQuality?: number;
   neuralReadiness?: number;
   focus?: number;
+  foodStatus?: ReadinessFuelStatus;
+  hydrated?: boolean;
   fuelHydrated?: boolean;
   hasLocalizedIssue?: boolean;
   sensation?: ReadinessSensation;
@@ -89,6 +98,8 @@ export type ReadinessDecision = {
   readinessLevel?: ReadinessLevel;
   readinessReasons?: string[];
   readinessGuidance?: string;
+  warmupReassessment?: WarmupReassessment;
+  maximalSprintRestricted?: boolean;
   // Legacy prototype fields remain optional so existing local records still load.
   energy?: number;
   hamstring?: number;

@@ -66,6 +66,12 @@ export function normalizePlannedWorkout(raw: unknown, fallback: PlannedWorkout):
     title: String(candidate.title ?? fallback.title),
     purpose: String(candidate.purpose ?? fallback.purpose),
     durationMinutes: normalizeDuration(candidate),
+    category: typeof candidate.category === 'string'
+      ? candidate.category as PlannedWorkout['category']
+      : fallback.category,
+    eventTags: Array.isArray(candidate.eventTags)
+      ? candidate.eventTags as PlannedWorkout['eventTags']
+      : fallback.eventTags,
     sections: candidate.sections.map((section: any) => ({
       title: String(section.title),
       exercises: Array.isArray(section.exercises)
