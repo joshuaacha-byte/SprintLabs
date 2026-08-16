@@ -3,6 +3,7 @@ import { ComponentProps, useCallback, useMemo, useState } from 'react';
 import { Alert, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Card, Eyebrow, ScreenTitle } from '@/components/sprint-ui';
+import { useCoachEntity } from '@/components/coach-context';
 import { Palette, useTheme } from '@/constants/sprintlab';
 import { weekdayLabels } from '@/data/workouts';
 import { workoutSourceNames } from '@/data/workout-sources';
@@ -19,6 +20,8 @@ export default function LibraryDetailScreen() {
   const router = useRouter(); const palette = useTheme(); const styles = useMemo(() => createStyles(palette), [palette]); const { id } = useLocalSearchParams<{ id: string }>(); const [workout, setWorkout] = useState<LibraryWorkout | null>(null); const [choosingDay, setChoosingDay] = useState(false);
   const load = useCallback(() => { if (id) getLibraryWorkout(id).then(setWorkout); }, [id]);
   useFocusEffect(load);
+  // Lets Coach know which workout the athlete was viewing if opened from this screen.
+  useCoachEntity(workout ? { id: workout.id, label: workout.name } : null);
   const duplicate = async () => { if (!workout) return; const copy = await duplicateLibraryWorkout(workout.id); completeStep(); Alert.alert('Draft copy created', `${copy.name} is a draft. Approved workouts are never changed silently.`); router.replace({ pathname: '/library-detail', params: { id: copy.id } }); };
   const archive = () => { if (!workout) return; Alert.alert('Archive this workout?', 'It remains preserved in the Library, but is removed from normal selection and future suggestions.', [{ text: 'Cancel', style: 'cancel' }, { text: 'Archive', style: 'destructive', onPress: async () => { warning(); await archiveLibraryWorkout(workout.id); Alert.alert('Moved to Archived', 'Open the Archived tab in the Library to view it or restore it later as a draft.'); router.replace({ pathname: '/(tabs)/library', params: { status: 'archived' } }); } }]); };
   const restore = async () => { if (!workout) return; await restoreLibraryWorkoutToDraft(workout.id); completeStep(); Alert.alert('Moved to In review', 'Review and approve the workout before it can be started or suggested.'); router.replace({ pathname: '/(tabs)/library', params: { status: 'draft' } }); };

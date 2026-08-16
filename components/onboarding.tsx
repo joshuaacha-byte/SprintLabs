@@ -11,22 +11,24 @@ export function OnboardingLayout({
   welcome = false,
   footer,
   trackLanes = false,
-}: PropsWithChildren<{ welcome?: boolean; footer?: ReactNode; trackLanes?: boolean }>) {
+  bare = false,
+}: PropsWithChildren<{ welcome?: boolean; footer?: ReactNode; trackLanes?: boolean; bare?: boolean }>) {
   const palette = useTheme();
   const styles = useMemo(() => createStyles(palette), [palette]);
   return <SafeAreaView
     edges={['top', 'left', 'right', 'bottom']}
     style={styles.safe}>
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.keyboard}>
-      {!welcome && !trackLanes ? <View pointerEvents="none" style={styles.glowLarge} /> : null}
-      {!welcome && !trackLanes ? <View pointerEvents="none" style={styles.glowSmall} /> : null}
+      {!welcome && !trackLanes && !bare ? <View pointerEvents="none" style={styles.glowLarge} /> : null}
+      {!welcome && !trackLanes && !bare ? <View pointerEvents="none" style={styles.glowSmall} /> : null}
       {trackLanes ? <View pointerEvents="none" style={styles.laneArcOuter} /> : null}
       {trackLanes ? <View pointerEvents="none" style={styles.laneArcInner} /> : null}
       <ScrollView
-        contentContainerStyle={[styles.page, welcome && styles.welcomePage, Boolean(footer) && styles.pageWithFooter]}
+        contentContainerStyle={[styles.page, welcome && styles.welcomePage, bare && styles.barePage, Boolean(footer) && styles.pageWithFooter]}
         contentInsetAdjustmentBehavior="never"
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        scrollEnabled={!bare}
       >
         {children}
       </ScrollView>
@@ -333,6 +335,7 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   laneArcInner: { position: 'absolute', width: 430, height: 430, borderRadius: 215, borderWidth: 1, borderColor: palette.accent, opacity: 0.055, top: -292, right: -190 },
   page: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 42, gap: 18, flexGrow: 1, width: '100%', maxWidth: 760, alignSelf: 'center' },
   pageWithFooter: { paddingBottom: 28 },
+  barePage: { paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0, gap: 0, maxWidth: undefined },
   stickyFooter: { width: '100%', maxWidth: 760, alignSelf: 'center', paddingHorizontal: 20, paddingTop: 10, paddingBottom: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.border, backgroundColor: palette.bg },
   welcomePage: { maxWidth: 640, paddingTop: 20, paddingBottom: 28, justifyContent: 'center' },
   progressRow: { flexDirection: 'row', alignItems: 'center', gap: 11 }, back: { height: 40, width: 40, borderRadius: 20, backgroundColor: palette.surface2, alignItems: 'center', justifyContent: 'center' }, backSpacer: { width: 40 }, backText: { color: palette.text, fontSize: 32, lineHeight: 35, marginTop: -4 }, track: { height: 7, borderRadius: 4, backgroundColor: palette.surface2, flex: 1, overflow: 'hidden' }, fill: { height: '100%', borderRadius: 4, backgroundColor: palette.accent }, stageText: { color: palette.muted, fontWeight: '700', fontSize: 12 },

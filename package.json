@@ -14,9 +14,12 @@
     "verify:streaks": "node --experimental-strip-types --loader ./scripts/alias-loader.mjs ./scripts/verify-streaks.ts",
     "verify:ai-context": "node --experimental-strip-types --loader ./scripts/alias-loader.mjs ./scripts/verify-ai-context.ts",
     "verify:ai-plan-change": "node --experimental-strip-types --loader ./scripts/alias-loader.mjs ./scripts/verify-ai-plan-change.ts",
+    "verify:coach-proposal": "node --experimental-strip-types --loader ./scripts/alias-loader.mjs ./scripts/verify-coach-proposal.ts",
+    "verify:coach-triggers": "node --experimental-strip-types --loader ./scripts/alias-loader.mjs ./scripts/verify-coach-triggers.ts",
     "test:coach": "node --experimental-strip-types ./scripts/dev-test-coach.ts",
     "test:coach-context": "node --experimental-strip-types --loader ./scripts/alias-loader.mjs ./scripts/dev-test-coach-context.ts",
     "test:coach-plan-change": "node --experimental-strip-types --loader ./scripts/alias-loader.mjs ./scripts/dev-test-coach-plan-change.ts",
+    "test:coach-c2": "node --experimental-strip-types --loader ./scripts/alias-loader.mjs ./scripts/dev-test-coach-c2.ts",
     "knowledge:upload": "node --experimental-strip-types ./scripts/knowledge-upload.ts",
     "knowledge:test": "node --experimental-strip-types ./scripts/knowledge-test.ts"
   },

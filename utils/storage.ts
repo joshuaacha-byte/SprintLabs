@@ -28,6 +28,8 @@ const TRAINING_HISTORY = 'sprintlab:training-history';
 const FUTURE_WORKOUT_OVERRIDES = 'sprintlab:future-workout-overrides';
 const PENDING_WORKOUT_LAUNCH = 'sprintlab:pending-workout-launch';
 const WEEK_SCHEDULE_HISTORY = 'sprintlab:week-schedule-history';
+const DISMISSED_COACH_TRIGGERS = 'sprintlab:dismissed-coach-triggers';
+const DISMISSED_COACH_TRIGGERS_MAX_ENTRIES = 200;
 const WEEK_SCHEDULE_HISTORY_MAX_ENTRIES = 120;
 
 const localDateKey = (date = new Date()) => date.toLocaleDateString('en-CA');
@@ -420,4 +422,20 @@ export async function addCompletedWorkoutSession(session: CompletedWorkoutSessio
   const sessions = await getCompletedWorkoutSessions();
   // A session keeps the same id from start to finish; guards against a double-tap on "Finish" creating two records.
   await AsyncStorage.setItem(COMPLETED_SESSIONS, JSON.stringify([session, ...sessions.filter(existing => existing.id !== session.id)]));
+}
+
+// SprintLab Coach UI Phase C-3: ids (utils/coach-triggers.ts's CoachTrigger.id) of local triggers
+// the athlete has already dismissed/acknowledged, so the same specific occurrence (the same
+// missed day, the same demanding session) doesn't keep re-flagging the launcher's attention dot.
+// A later, different occurrence of the same trigger TYPE gets a new id and stays eligible.
+export async function getDismissedCoachTriggerIds(): Promise<string[]> {
+  const value = await AsyncStorage.getItem(DISMISSED_COACH_TRIGGERS);
+  return value ? JSON.parse(value) : [];
+}
+
+export async function addDismissedCoachTriggerId(id: string) {
+  const existing = await getDismissedCoachTriggerIds();
+  if (existing.includes(id)) return;
+  const next = [...existing, id].slice(-DISMISSED_COACH_TRIGGERS_MAX_ENTRIES);
+  await AsyncStorage.setItem(DISMISSED_COACH_TRIGGERS, JSON.stringify(next));
 }

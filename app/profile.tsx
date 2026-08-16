@@ -7,7 +7,7 @@ import { NativeDateField, NativeTimeField } from '@/components/date-time-fields'
 import { CommitmentHoldButton, MultiSelectCard, OnboardingLayout, OnboardingProgress, PerformanceInput, PerformanceTimeWheel, PrimaryOnboardingButton, ProfileRevealCard, SecondaryOnboardingButton, SelectableCard, splitImages, SplitGuide, SplitPose } from '@/components/onboarding';
 import { PlanBuildStep } from '@/components/plan-build-loading';
 import { Palette, useTheme } from '@/constants/sprintlab';
-import type { AthleteExperienceLevel, AthleteProfile, AthleteSport, CompetitionStatus, PainArea, RaceDevelopmentArea, SpeedGoal, SprintEvent, TimeAwayDuration, TimingMethod, TrainingConcernArea, TrainingConcernStatus, TrainingDay, TrainingDemand, WeekdayIndex as WeekdayIdx } from '@/types';
+import type { AthleteExperienceLevel, AthleteProfile, AthleteSport, CompetitionStatus, PainArea, RaceDevelopmentArea, SpeedGoal, SprintEvent, TimeAwayDuration, TimingMethod, TrainingConcernArea, TrainingConcernStatus, TrainingDay, TrainingDemand } from '@/types';
 import { classificationExplanation, profileSummary, sportReaction } from '@/utils/onboarding-copy';
 import { error as hapticError, success as hapticSuccess, tap, warning as hapticWarning } from '@/utils/haptics';
 import { clearAthleteOnboardingDraft, getAthleteOnboardingDraft, getAthleteProfile, getTrainingWorkflow, resetAllSprintLabLocalData, resetAthleteOnboarding, saveAthleteOnboardingDraft, saveAthleteProfile, trainingWorkflowChanges, type TrainingWorkflow } from '@/utils/athlete-profile';
@@ -387,6 +387,7 @@ export default function ProfileScreen() {
     key={step}
     welcome={step === 1}
     trackLanes={step === 3 || isSpeedPriorityStep || isCommitmentStep}
+    bare={step === 16}
     footer={step === 16
       ? undefined
       : step === 3
@@ -435,9 +436,9 @@ export default function ProfileScreen() {
         : undefined}
   >
     {step === 1 ? <Welcome onContinue={() => go(2)} onOpenDebugMenu={openDebugMenu} /> : <>
-      <OnboardingProgress step={isCommitmentStep ? 1 : step === 3 ? 2 : isSpeedPriorityStep ? 4 : isRevealStep ? 2 : isFootballBaselineStep || isExperienceStep || isFrequencyStep || isSeasonStep || isModeStep || isSourcesStep ? 1 : isReminderStep ? 2 : isDemandsStep ? (placingCommitments ? 3 : 2) : isLimitationsStep ? (reviewingConstraints ? 2 : 1) : step - 1} total={isCommitmentStep ? 1 : step === 3 || isSpeedPriorityStep ? 6 : isFootballBaselineStep || isExperienceStep ? 4 : isFrequencyStep || isDemandsStep ? 3 : isLimitationsStep ? 2 : isSeasonStep ? 1 : isModeStep || isReminderStep || isSourcesStep || isRevealStep ? 2 : TOTAL_STEPS - 1} onBack={back} stageLabel={isCommitmentStep ? 'Commitment · 1 of 1' : isFootballBaselineStep ? 'Performance · 1 of 4' : isExperienceStep ? 'Training · 1 of 4' : isFrequencyStep ? 'Schedule · 1 of 3' : isDemandsStep ? `Schedule · ${placingCommitments ? 3 : 2} of 3` : isLimitationsStep ? `Constraints · ${reviewingConstraints ? 2 : 1} of 2` : isSeasonStep ? 'Season · 1 of 1' : isModeStep ? 'Setup · 1 of 2' : isReminderStep ? 'Setup · 2 of 2' : isSourcesStep ? 'Plan · 1 of 2' : isRevealStep ? 'Plan · 2 of 2' : stageLabelForStep(step)} />
+      {step === 16 ? null : <OnboardingProgress step={isCommitmentStep ? 1 : step === 3 ? 2 : isSpeedPriorityStep ? 4 : isRevealStep ? 2 : isFootballBaselineStep || isExperienceStep || isFrequencyStep || isSeasonStep || isModeStep || isSourcesStep ? 1 : isReminderStep ? 2 : isDemandsStep ? (placingCommitments ? 3 : 2) : isLimitationsStep ? (reviewingConstraints ? 2 : 1) : step - 1} total={isCommitmentStep ? 1 : step === 3 || isSpeedPriorityStep ? 6 : isFootballBaselineStep || isExperienceStep ? 4 : isFrequencyStep || isDemandsStep ? 3 : isLimitationsStep ? 2 : isSeasonStep ? 1 : isModeStep || isReminderStep || isSourcesStep || isRevealStep ? 2 : TOTAL_STEPS - 1} onBack={back} stageLabel={isCommitmentStep ? 'Commitment · 1 of 1' : isFootballBaselineStep ? 'Performance · 1 of 4' : isExperienceStep ? 'Training · 1 of 4' : isFrequencyStep ? 'Schedule · 1 of 3' : isDemandsStep ? `Schedule · ${placingCommitments ? 3 : 2} of 3` : isLimitationsStep ? `Constraints · ${reviewingConstraints ? 2 : 1} of 2` : isSeasonStep ? 'Season · 1 of 1' : isModeStep ? 'Setup · 1 of 2' : isReminderStep ? 'Setup · 2 of 2' : isSourcesStep ? 'Plan · 1 of 2' : isRevealStep ? 'Plan · 2 of 2' : stageLabelForStep(step)} />}
       {isCommitmentStep || step === 16 ? null : <SplitGuide speech={speech} pose={splitPose} compact={step === 3 || isSpeedPriorityStep || isFootballBaselineStep || isSourcesStep || isRevealStep} prominent={step === 12 || step === 13} />}
-      <View style={styles.content}>{renderStep(step, profile, update, go, next)}</View>
+      <View style={[styles.content, step === 16 && styles.contentBare]}>{renderStep(step, profile, update, go, next)}</View>
       {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
       {step === 3 || step === 16 || isSpeedPriorityStep || isFootballBaselineStep || isExperienceStep || isFrequencyStep || isDemandsStep || isLimitationsStep || isSeasonStep || isModeStep || isReminderStep || isSourcesStep || isRevealStep || isCommitmentStep ? null : step === 2 ? <><PrimaryOnboardingButton title={profile.name.trim() ? 'Continue' : 'Skip for now'} onPress={next} /><SecondaryOnboardingButton title="Back" onPress={() => go(1)} /></> : step === 7 ? null : <PrimaryOnboardingButton title="Continue" onPress={next} />}
     </>}
@@ -1681,6 +1682,7 @@ function poseForStep(step: number): SplitPose {
 const createStyles = (palette: Palette) => StyleSheet.create({
   loading: { flex: 1, backgroundColor: palette.bg },
   content: { gap: 16 },
+  contentBare: { flex: 1, gap: 0 },
   welcomeHero: { minHeight: 610, width: '100%', maxWidth: 620, alignSelf: 'center', justifyContent: 'center', overflow: 'hidden', borderRadius: 24, paddingVertical: 24, paddingHorizontal: 18, backgroundColor: '#080D12' },
   welcomeColumns: { width: '100%', justifyContent: 'center', alignItems: 'center', gap: 24, zIndex: 2 },
   mascotColumn: { width: '100%', alignItems: 'center', gap: 2 },

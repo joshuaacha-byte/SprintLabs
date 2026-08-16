@@ -4,15 +4,7 @@ import { Stack } from 'expo-router';
 import { Card, PrimaryButton, ScreenTitle } from '@/components/sprint-ui';
 import { Palette, useTheme } from '@/constants/sprintlab';
 import type { CoachResponsePayload, PlanChangeProposal } from '@/types';
-import { getAthleteProfile } from '@/utils/athlete-profile';
-import { buildAthleteAIContext } from '@/utils/ai-context';
-import {
-  getCompletedWorkoutSessions,
-  getLogs,
-  getReadiness,
-  getScheduleHistory,
-  getWeekSchedule,
-} from '@/utils/storage';
+import { buildCurrentAthleteAIContext } from '@/utils/ai-context-live';
 import { applyAIPlanChange } from '@/utils/plan-change-apply';
 
 // SprintLab Intelligence I-2: smallest development-safe surface for reviewing a Gemini
@@ -42,20 +34,12 @@ export default function CoachDevScreen() {
     setApplyResult(null);
     try {
       const today = localDateKey();
-      const [profile, schedule, scheduleHistory, sessions, logs, readiness] = await Promise.all([
-        getAthleteProfile(),
-        getWeekSchedule(),
-        getScheduleHistory(),
-        getCompletedWorkoutSessions(),
-        getLogs(),
-        getReadiness(today),
-      ]);
-      if (!profile) {
+      const context = await buildCurrentAthleteAIContext();
+      if (!context) {
         setPhase('error');
         setError('No local athlete profile yet — complete onboarding before testing Coach.');
         return;
       }
-      const context = buildAthleteAIContext({ profile, schedule, scheduleHistory, sessions, logs, readiness });
       const res = await fetch('/api/coach', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

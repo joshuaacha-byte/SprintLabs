@@ -1,5 +1,5 @@
 import { PropsWithChildren, useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View, ViewStyle } from 'react-native';
 import { Palette, useTheme } from '@/constants/sprintlab';
 
 export function Card({ children, style }: PropsWithChildren<{ style?: ViewStyle }>) {
@@ -9,6 +9,28 @@ export function Card({ children, style }: PropsWithChildren<{ style?: ViewStyle 
 export function Eyebrow({ children }: PropsWithChildren) {
   const styles = useStyles();
   return <Text style={styles.eyebrow}>{children}</Text>;
+}
+/** Compact SprintLab brand lockup: the canonical SL stopwatch mark (assets/images/sprintlab-logo.png
+ * — the same asset used for the app icon and boot splash) plus a two-tone "SPRINTLAB" wordmark.
+ * `variant` is reserved for future sizing (e.g. a larger splash/marketing treatment) — only
+ * `'header'` exists today, sized for the Today screen's top-left brand area. */
+export function SprintLabBrandLockup({ variant = 'header' }: { variant?: 'header' }) {
+  void variant;
+  const styles = useStyles();
+  return (
+    <View style={styles.lockup}>
+      <View style={styles.lockupBadgeWrap}>
+        <View style={styles.lockupGlow} pointerEvents="none" />
+        <View style={styles.lockupBadge}>
+          <Image source={require('@/assets/images/sprintlab-logo.png')} style={styles.lockupMark} resizeMode="contain" accessibilityIgnoresInvertColors />
+        </View>
+      </View>
+      <Text style={styles.lockupWordmark}>
+        <Text style={styles.lockupSprint}>SPRINT</Text>
+        <Text style={styles.lockupLab}>LAB</Text>
+      </Text>
+    </View>
+  );
 }
 export function ScreenTitle({ children, subtitle }: PropsWithChildren<{ subtitle?: string }>) {
   const styles = useStyles();
@@ -41,4 +63,12 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   metric: { flex: 1, minWidth: 90, gap: 4 },
   metricValue: { color: palette.text, fontSize: 22, fontWeight: '900' },
   metricLabel: { color: palette.muted, fontSize: 12, lineHeight: 16 },
+  lockup: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  lockupBadgeWrap: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center' },
+  lockupGlow: { position: 'absolute', width: 38, height: 38, borderRadius: 13, backgroundColor: palette.accent, opacity: 0.16 },
+  lockupBadge: { width: 30, height: 30, borderRadius: 9, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(201,255,24,0.4)' },
+  lockupMark: { width: '100%', height: '100%' },
+  lockupWordmark: { fontSize: 19, fontWeight: '900', fontStyle: 'italic', letterSpacing: -0.3 },
+  lockupSprint: { color: palette.text },
+  lockupLab: { color: palette.accent },
 });

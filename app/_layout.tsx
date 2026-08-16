@@ -5,6 +5,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import 'react-native-reanimated';
+import { CoachLauncher } from '@/components/coach-launcher';
+import { CoachOverlay } from '@/components/coach-overlay';
+import { CoachProvider } from '@/components/coach-context';
 import { Palette, useTheme } from '@/constants/sprintlab';
 import { getAthleteProfile } from '@/utils/athlete-profile';
 import { initializeWorkoutNotifications } from '@/utils/workout-reminders';
@@ -65,19 +68,23 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="readiness" options={{ headerShown: false, presentation: 'modal' }} />
-        <Stack.Screen name="workout-builder" options={{ headerShown: false, presentation: 'modal' }} />
-        <Stack.Screen name="workout" options={{ headerShown: false }} />
-        <Stack.Screen name="log" options={{ headerShown: false }} />
-        <Stack.Screen name="history-detail" options={{ headerShown: false }} />
-        <Stack.Screen name="library-detail" options={{ headerShown: false }} />
-        <Stack.Screen name="profile" options={{ headerShown: false, gestureEnabled: false }} />
-        <Stack.Screen name="settings" options={{ headerShown: false, presentation: 'modal' }} />
-        <Stack.Screen name="plan-preview" options={{ headerShown: false, presentation: 'modal' }} />
-      </Stack>
-      <StatusBar style="auto" />
+      <CoachProvider>
+        <Stack>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="readiness" options={{ headerShown: false, presentation: 'modal' }} />
+          <Stack.Screen name="workout-builder" options={{ headerShown: false, presentation: 'modal' }} />
+          <Stack.Screen name="workout" options={{ headerShown: false }} />
+          <Stack.Screen name="log" options={{ headerShown: false }} />
+          <Stack.Screen name="history-detail" options={{ headerShown: false }} />
+          <Stack.Screen name="library-detail" options={{ headerShown: false }} />
+          <Stack.Screen name="profile" options={{ headerShown: false, gestureEnabled: false }} />
+          <Stack.Screen name="settings" options={{ headerShown: false, presentation: 'modal' }} />
+          <Stack.Screen name="plan-preview" options={{ headerShown: false, presentation: 'modal' }} />
+        </Stack>
+        <CoachLauncher />
+        <CoachOverlay />
+        <StatusBar style="auto" />
+      </CoachProvider>
     </SafeAreaProvider>
   );
 }

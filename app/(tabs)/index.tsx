@@ -2,7 +2,7 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useCallback, useMemo, useState } from 'react';
 import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { Card, Eyebrow, PrimaryButton } from '@/components/sprint-ui';
+import { Card, Eyebrow, PrimaryButton, SprintLabBrandLockup } from '@/components/sprint-ui';
 import { Palette, useTheme } from '@/constants/sprintlab';
 import { ActiveWorkoutSession, AthleteProfile, ReadinessDecision, ScheduledDay, WeekdayIndex } from '@/types';
 import { getAthleteProfile, getTrainingWorkflow } from '@/utils/athlete-profile';
@@ -92,7 +92,7 @@ export default function TodayScreen() {
   );
 
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.page}>
-    <View style={styles.top}><View><Eyebrow>{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</Eyebrow><Text style={styles.brand}>SprintLab</Text></View><Pressable accessibilityLabel="Open profile and settings" onPress={() => { tap(); router.push('/settings'); }} style={styles.avatar}><Text style={styles.avatarText}>{athlete?.name.trim().slice(0, 1).toUpperCase() || 'S'}</Text></Pressable></View>
+    <View style={styles.top}><View style={styles.brandColumn}><Eyebrow>{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</Eyebrow><SprintLabBrandLockup /></View><Pressable accessibilityLabel="Open profile and settings" onPress={() => { tap(); router.push('/settings'); }} style={styles.avatar}><Text style={styles.avatarText}>{athlete?.name.trim().slice(0, 1).toUpperCase() || 'S'}</Text></Pressable></View>
 
     {needsPlanSetup ? <Pressable onPress={() => { tap(); router.push('/plan-preview'); }}><Card style={styles.setupCard}>
       <View style={styles.iconCircle}><MaterialIcons name="auto-awesome" size={22} color={palette.accent} /></View>
