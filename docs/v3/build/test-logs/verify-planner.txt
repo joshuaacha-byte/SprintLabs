@@ -1,0 +1,17 @@
+
+> sprintlab@1.0.0 verify:planner
+> node --experimental-strip-types ./scripts/verify-planner-architecture.ts && node --experimental-strip-types --loader ./scripts/alias-loader.mjs ./scripts/verify-plan-pathways.ts
+
+(node:5182) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/joshuaacha/Desktop/sprintlab/scripts/verify-planner-architecture.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/joshuaacha/Desktop/sprintlab/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+Planner architecture scenarios passed.
+(node:5183) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./scripts/alias-loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+All release planner scenarios passed: tiered football/general speed, reduced-readiness regression, History metadata, 60m, track, team-load, coach, and log-only modes.
+(node:5183) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/joshuaacha/Desktop/sprintlab/scripts/verify-plan-pathways.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/joshuaacha/Desktop/sprintlab/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)

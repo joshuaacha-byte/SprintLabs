@@ -6,6 +6,7 @@ import {
   savePendingWorkoutLaunch,
   startWorkoutSession,
 } from '@/utils/storage';
+import { evaluateReadiness, workoutIncludesMaximalSprinting } from '@/utils/readiness';
 
 const localDateKey = () => new Date().toLocaleDateString('en-CA');
 
@@ -19,7 +20,10 @@ export async function prepareWorkoutLaunch(
   if (await getActiveWorkoutSession()) return 'active-session';
 
   const readiness = await getReadiness(localDateKey());
-  if (!readiness) {
+  const evaluation = readiness?.status === 'completed' ? evaluateReadiness(readiness) : null;
+  const restricted = evaluation?.level === 'red'
+    || Boolean(evaluation?.maximalSprintRestricted && workoutIncludesMaximalSprinting(workout));
+  if (!readiness || restricted) {
     await savePendingWorkoutLaunch({
       workout,
       source,

@@ -1,18 +1,21 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Alert, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Card, Eyebrow, ScreenTitle } from '@/components/sprint-ui';
 import { AppFooter } from '@/components/app-footer';
-import { palette } from '@/constants/sprintlab';
+import { Palette, useTheme } from '@/constants/sprintlab';
 import { defaultWeekSchedule } from '@/data/workouts';
 import { AthleteProfile, ScheduledDay, WeekdayIndex } from '@/types';
-import { getAthleteProfile } from '@/utils/athlete-profile';
+import { getAthleteProfile, getTrainingWorkflow } from '@/utils/athlete-profile';
 import { getWeekSchedule, markDayAsRest, swapScheduledDays } from '@/utils/storage';
 import { prepareWorkoutLaunch } from '@/utils/workout-launch';
+import { completeStep, error, tap, warning } from '@/utils/haptics';
 
 export default function PlanScreen() {
   const router = useRouter();
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
   const todayIndex = new Date().getDay() as WeekdayIndex;
   const [schedule, setSchedule] = useState<ScheduledDay[]>(defaultWeekSchedule);
   const [athlete, setAthlete] = useState<AthleteProfile | null>(null);
@@ -28,19 +31,40 @@ export default function PlanScreen() {
   const trainingDays = schedule.filter(day => day.kind === 'workout').length;
   const restDays = schedule.length - trainingDays;
   const selectedDay = schedule.find(day => day.dayIndex === selected);
+  const workflow = athlete ? getTrainingWorkflow(athlete) : null;
+  const manualWorkflow = workflow === 'coach-plan' || workflow === 'log-only';
+  const workflowTitle = workflow === 'log-only' ? 'Logging without a plan' : workflow === 'coach-plan' ? 'Coach plan protected' : 'Build from your speed profile';
+  const workflowCopy = workflow === 'log-only'
+    ? 'No generated calendar is required. Add sessions manually or start an unplanned workout whenever you train.'
+    : workflow === 'coach-plan'
+      ? 'SprintLab will not generate or replace your coach’s sessions. Keep editing the schedule manually.'
+      : workflow === 'combined'
+        ? 'Keep coach or manual sessions, then preview SprintLab recommendations for appropriate open days.'
+        : 'Preview a deterministic week selected from Approved library workouts.';
 
   const editDay = (dayIndex: WeekdayIndex) => {
+    tap();
     router.push({ pathname: '/workout-builder', params: { day: String(dayIndex) } });
   };
   const markRest = async (dayIndex: WeekdayIndex) => {
-    await markDayAsRest(dayIndex);
-    setChoosingMoveTarget(false);
-    await loadSchedule();
+    try {
+      await markDayAsRest(dayIndex);
+      warning();
+      setChoosingMoveTarget(false);
+      await loadSchedule();
+    } catch {
+      error();
+    }
   };
   const swapWith = async (target: WeekdayIndex) => {
-    await swapScheduledDays(selected, target);
-    setChoosingMoveTarget(false);
-    await loadSchedule();
+    try {
+      await swapScheduledDays(selected, target);
+      completeStep();
+      setChoosingMoveTarget(false);
+      await loadSchedule();
+    } catch {
+      error();
+    }
   };
   const startPlanned = async (day: ScheduledDay) => {
     if (!day.workout) return;
@@ -56,7 +80,11 @@ export default function PlanScreen() {
   const launch = async (day: ScheduledDay, scheduled: boolean) => {
     if (!day.workout) return;
     const result = await prepareWorkoutLaunch(day.workout, 'plan', scheduled ? { scheduledDate: new Date().toLocaleDateString('en-CA'), scheduledDayIndex: day.dayIndex } : undefined);
-    if (result === 'active-session') return Alert.alert('Workout already in progress', 'Finish or discard the active workout before starting another.', [{ text: 'Open workout', onPress: () => router.push('/workout') }]);
+    if (result === 'active-session') {
+      error();
+      return Alert.alert('Workout already in progress', 'Finish or discard the active workout before starting another.', [{ text: 'Open workout', onPress: () => router.push('/workout') }]);
+    }
+    completeStep();
     if (result === 'readiness-required') router.push({ pathname: '/readiness', params: { launch: 'pending' } });
     else router.push('/workout');
   };
@@ -66,18 +94,31 @@ export default function PlanScreen() {
     <ScreenTitle subtitle="Each weekday has its own workout or rest day. Today follows this schedule automatically.">My training week</ScreenTitle>
     <Card style={styles.suggestionCard}>
       <View style={styles.suggestionHead}>
-        <View style={styles.suggestionIcon}><MaterialIcons name={athlete?.trainingPlanMode === 'log-coach-plan' ? 'shield' : 'auto-awesome'} size={21} color={palette.accent} /></View>
+        <View style={styles.suggestionIcon}><MaterialIcons name={manualWorkflow ? 'shield' : 'auto-awesome'} size={21} color={palette.accent} /></View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.suggestionTitle}>{athlete?.trainingPlanMode === 'log-coach-plan' ? 'Coach plan protected' : 'Build from your speed profile'}</Text>
-          <Text style={styles.suggestionCopy}>{athlete?.trainingPlanMode === 'log-coach-plan' ? 'SprintLab will not replace your coach’s plan. Keep editing the schedule manually.' : 'Preview a deterministic week selected only from Approved track workouts.'}</Text>
+          <Text style={styles.suggestionTitle}>{workflowTitle}</Text>
+          <Text style={styles.suggestionCopy}>{workflowCopy}</Text>
         </View>
       </View>
-      {athlete?.trainingPlanMode !== 'log-coach-plan' ? <Pressable onPress={() => router.push('/plan-preview')} style={styles.previewButton}><Text style={styles.previewButtonText}>Preview suggested week</Text><MaterialIcons name="arrow-forward" size={18} color={palette.accent} /></Pressable> : null}
+      {!manualWorkflow ? <Pressable onPress={() => { tap(); router.push('/plan-preview'); }} style={styles.previewButton}><Text style={styles.previewButtonText}>Preview suggested week</Text><MaterialIcons name="arrow-forward" size={18} color={palette.accent} /></Pressable> : null}
     </Card>
     <View style={styles.summary}>
       <View><Text style={styles.big}>{trainingDays}</Text><Text style={styles.small}>training days</Text></View>
       <View><Text style={styles.big}>{restDays}</Text><Text style={styles.small}>rest days</Text></View>
     </View>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Browse workout library"
+      onPress={() => { tap(); router.push('/library'); }}
+      style={styles.libraryAction}
+    >
+      <View style={styles.libraryIcon}><MaterialIcons name="library-books" size={19} color={palette.accent} /></View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.libraryTitle}>Browse workout library</Text>
+        <Text style={styles.libraryCopy}>Find a session to add, use once, or swap into your week.</Text>
+      </View>
+      <MaterialIcons name="chevron-right" size={21} color={palette.muted} />
+    </Pressable>
 
     {schedule.map(day => {
       const isSelected = selected === day.dayIndex;
@@ -86,7 +127,7 @@ export default function PlanScreen() {
       const detail = day.kind === 'workout'
         ? `${day.workout?.durationMinutes ?? 0} min · ${day.workout?.sections.reduce((sum, section) => sum + section.exercises.length, 0) ?? 0} exercises`
         : day.restNote || 'No training scheduled';
-      return <Pressable key={day.dayIndex} onPress={() => { setSelected(day.dayIndex); setChoosingMoveTarget(false); }}>
+      return <Pressable key={day.dayIndex} onPress={() => { if (selected !== day.dayIndex) tap(); setSelected(day.dayIndex); setChoosingMoveTarget(false); }}>
         <Card style={isSelected ? styles.selected : undefined}>
           <View style={styles.row}>
             <View style={[styles.day, isSelected && styles.daySelected]}><Text style={styles.dayText}>{day.shortLabel}</Text></View>
@@ -103,14 +144,14 @@ export default function PlanScreen() {
               <View style={styles.actions}>
                 <Pressable onPress={() => startPlanned(day)} style={styles.startAction}><MaterialIcons name="play-arrow" size={18} color="#0B1000" /><Text style={styles.startActionText}>{isToday ? 'Start today’s session' : 'Start today'}</Text></Pressable>
                 <Pressable onPress={() => editDay(day.dayIndex)} style={styles.primaryAction}><MaterialIcons name="edit" size={17} color={palette.accent} /><Text style={styles.primaryActionText}>Edit session</Text></Pressable>
-                <Pressable onPress={() => setChoosingMoveTarget(value => !value)} style={styles.secondaryAction}><Text style={styles.secondaryActionText}>Move</Text></Pressable>
+                <Pressable onPress={() => { tap(); setChoosingMoveTarget(value => !value); }} style={styles.secondaryAction}><Text style={styles.secondaryActionText}>Move</Text></Pressable>
                 <Pressable onPress={() => markRest(day.dayIndex)} style={styles.secondaryAction}><Text style={styles.restActionText}>Make rest day</Text></Pressable>
               </View>
             </> : <>
               <Text style={styles.expandedText}>{day.restNote}</Text>
               <View style={styles.actions}>
                 <Pressable onPress={() => editDay(day.dayIndex)} style={styles.primaryAction}><MaterialIcons name="add" size={18} color={palette.accent} /><Text style={styles.primaryActionText}>Plan a workout</Text></Pressable>
-                <Pressable onPress={() => setChoosingMoveTarget(value => !value)} style={styles.secondaryAction}><Text style={styles.secondaryActionText}>Move</Text></Pressable>
+                <Pressable onPress={() => { tap(); setChoosingMoveTarget(value => !value); }} style={styles.secondaryAction}><Text style={styles.secondaryActionText}>Move</Text></Pressable>
               </View>
             </>}
 
@@ -127,7 +168,7 @@ export default function PlanScreen() {
   </ScrollView></SafeAreaView>;
 }
 
-const styles = StyleSheet.create({
+const createStyles = (palette: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.bg },
   page: { padding: 20, paddingBottom: 36, gap: 14, width: '100%', maxWidth: 820, alignSelf: 'center' },
   suggestionCard: { gap: 13, borderColor: '#405020' },
@@ -140,6 +181,10 @@ const styles = StyleSheet.create({
   summary: { flexDirection: 'row', gap: 12, paddingVertical: 4 },
   big: { color: palette.accent, fontSize: 27, fontWeight: '900' },
   small: { color: palette.muted, fontSize: 12, marginTop: 2 },
+  libraryAction: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 11, borderRadius: 15, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, paddingHorizontal: 13, paddingVertical: 11 },
+  libraryIcon: { width: 38, height: 38, borderRadius: 11, backgroundColor: palette.accentDark, alignItems: 'center', justifyContent: 'center' },
+  libraryTitle: { color: palette.text, fontSize: 13, fontWeight: '900' },
+  libraryCopy: { color: palette.muted, fontSize: 10, lineHeight: 14, marginTop: 2 },
   selected: { borderColor: palette.accent },
   row: { flexDirection: 'row', alignItems: 'center', gap: 13 },
   day: { width: 48, height: 48, borderRadius: 12, backgroundColor: palette.surface2, alignItems: 'center', justifyContent: 'center' },

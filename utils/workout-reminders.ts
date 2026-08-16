@@ -18,6 +18,10 @@ export type ReminderSyncResult =
   | { status: 'scheduled'; count: number; nextAt: string | null }
   | { status: 'disabled' | 'unsupported' | 'permission-denied'; count: 0 };
 
+function notificationPermissionGranted(permission: { granted?: boolean; status?: string; ios?: { status?: number } }) {
+  return permission.granted === true || permission.status === 'granted';
+}
+
 const dateKey = (date: Date) => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -93,17 +97,6 @@ function completedDates(logs: TrainingLog[]) {
     .map(log => log.date));
 }
 
-const weekdayByIndex = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
-
-function isBlockedReminderDate(profile: AthleteProfile, date: Date, dateValue: string) {
-  const weekday = weekdayByIndex[date.getDay()];
-  if (profile.preferredRestDay === weekday) return true;
-  if ((profile.sportPracticeDays ?? []).includes(weekday)) return true;
-  if ((profile.gameOrCompetitionDays ?? []).some(value => value === weekday || value === dateValue)) return true;
-  if ((profile.seasonCalendar?.priorityMeets ?? []).some(meet => meet.date === dateValue)) return true;
-  return false;
-}
-
 export async function syncWorkoutReminders(options?: {
   requestPermission?: boolean;
   profile?: AthleteProfile | null;
@@ -117,10 +110,10 @@ export async function syncWorkoutReminders(options?: {
   if (!profile?.workoutReminderEnabled) return { status: 'disabled', count: 0 };
 
   let permission = await Notifications.getPermissionsAsync();
-  if (permission.status !== 'granted' && options?.requestPermission) {
+  if (!notificationPermissionGranted(permission) && options?.requestPermission) {
     permission = await Notifications.requestPermissionsAsync();
   }
-  if (permission.status !== 'granted') return { status: 'permission-denied', count: 0 };
+  if (!notificationPermissionGranted(permission)) return { status: 'permission-denied', count: 0 };
 
   const [schedule, logs, overrides] = await Promise.all([
     options?.schedule ? Promise.resolve(options.schedule) : getWeekSchedule(),
@@ -137,7 +130,6 @@ export async function syncWorkoutReminders(options?: {
     triggerDate.setHours(profile.workoutReminderHour ?? 16, profile.workoutReminderMinute ?? 0, 0, 0);
     if (triggerDate <= now) continue;
     const date = dateKey(triggerDate);
-    if (isBlockedReminderDate(profile, triggerDate, date)) continue;
     const override = overrides.find(item => item.date === date);
     const recurringDay = schedule.find(day => day.dayIndex === triggerDate.getDay());
     const scheduledDay: ScheduledDay | undefined = override
@@ -180,8 +172,8 @@ export async function scheduleWorkoutReminderTest(profile?: AthleteProfile | nul
   const Notifications = await configureNotifications();
   if (!Notifications) return { status: 'unsupported' as const };
   let permission = await Notifications.getPermissionsAsync();
-  if (permission.status !== 'granted') permission = await Notifications.requestPermissionsAsync();
-  if (permission.status !== 'granted') return { status: 'permission-denied' as const };
+  if (!notificationPermissionGranted(permission)) permission = await Notifications.requestPermissionsAsync();
+  if (!notificationPermissionGranted(permission)) return { status: 'permission-denied' as const };
 
   const schedule = await getWeekSchedule();
   const today = schedule.find(day => day.dayIndex === new Date().getDay());

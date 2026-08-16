@@ -108,6 +108,8 @@ export function workoutToPlannedSnapshot(log: TrainingLog): PlannedWorkout {
     title: `${log.plannedWorkout.name} (copy)`,
     purpose: log.plannedWorkout.purpose,
     durationMinutes: log.plannedWorkout.estimatedDurationMinutes,
+    category: log.plannedWorkout.trainingCategory,
+    eventTags: [...log.plannedWorkout.eventPathways],
     sections: log.plannedWorkout.sections.map(section => ({
       title: section.title,
       exercises: section.exercises.map((exercise): PlannedExercise => ({

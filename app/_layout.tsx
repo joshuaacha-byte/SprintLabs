@@ -1,13 +1,14 @@
 import { Stack, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import 'react-native-reanimated';
-import { palette } from '@/constants/sprintlab';
-import { splitImages } from '@/components/onboarding';
+import { Palette, useTheme } from '@/constants/sprintlab';
 import { getAthleteProfile } from '@/utils/athlete-profile';
 import { initializeWorkoutNotifications } from '@/utils/workout-reminders';
+import { applyThemePreference, getThemePreference } from '@/utils/theme-preference';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -18,6 +19,8 @@ SplashScreen.setOptions({ duration: 650, fade: true });
 export default function RootLayout() {
   const router = useRouter();
   const pathname = usePathname();
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
   const [booted, setBooted] = useState(false);
 
   useEffect(() => {
@@ -31,8 +34,9 @@ export default function RootLayout() {
   useEffect(() => {
     let active = true;
     const minimumWelcome = new Promise(resolve => setTimeout(resolve, 700));
-    void Promise.all([getAthleteProfile(), minimumWelcome]).then(([profile]) => {
+    void Promise.all([getAthleteProfile(), getThemePreference(), minimumWelcome]).then(([profile, themePreference]) => {
       if (!active) return;
+      applyThemePreference(themePreference);
       if (!profile?.onboardingComplete && pathname !== '/profile') {
         router.replace('/profile');
       }
@@ -45,20 +49,22 @@ export default function RootLayout() {
 
   if (!booted) {
     return (
-      <View style={styles.boot}>
-        <View pointerEvents="none" style={styles.bootGlow} />
-        <Image source={splitImages.welcome} resizeMode="contain" style={styles.bootSplit} />
-        <Text style={styles.bootEyebrow}>WELCOME TO</Text>
-        <Text style={styles.bootTitle}>SPRINTLAB</Text>
-        <View style={styles.bootLine} />
-        <Text style={styles.bootCopy}>Speed training built for athletes.</Text>
-        <StatusBar style="light" />
-      </View>
+      <SafeAreaProvider>
+        <View style={styles.boot}>
+          <View pointerEvents="none" style={styles.bootGlow} />
+          <Image source={require('@/assets/images/sprintlab-logo.png')} resizeMode="contain" style={styles.bootSplit} />
+          <Text style={styles.bootEyebrow}>Welcome to</Text>
+          <Text style={styles.bootTitle}>SprintLab</Text>
+          <View style={styles.bootLine} />
+          <Text style={styles.bootCopy}>Science-based speed training, built for athletes by athletes.</Text>
+          <StatusBar style="auto" />
+        </View>
+      </SafeAreaProvider>
     );
   }
 
   return (
-    <>
+    <SafeAreaProvider>
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="readiness" options={{ headerShown: false, presentation: 'modal' }} />
@@ -71,12 +77,12 @@ export default function RootLayout() {
         <Stack.Screen name="settings" options={{ headerShown: false, presentation: 'modal' }} />
         <Stack.Screen name="plan-preview" options={{ headerShown: false, presentation: 'modal' }} />
       </Stack>
-      <StatusBar style="light" />
-    </>
+      <StatusBar style="auto" />
+    </SafeAreaProvider>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (palette: Palette) => StyleSheet.create({
   boot: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.bg, overflow: 'hidden', padding: 24 },
   bootGlow: { position: 'absolute', width: 430, height: 430, borderRadius: 215, backgroundColor: '#4C760C', opacity: 0.22, top: -240, right: -180 },
   bootSplit: { width: 150, height: 150, marginBottom: 18 },

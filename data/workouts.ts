@@ -1,4 +1,4 @@
-import { ExerciseTracking, PlannedWorkout, ScheduledDay, WeekdayIndex } from '@/types';
+import type { ExerciseTracking, PlannedWorkout, ScheduledDay, WeekdayIndex } from '@/types';
 
 const completion: ExerciseTracking = { kind: 'completion' };
 

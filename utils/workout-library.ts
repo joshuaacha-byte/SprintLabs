@@ -14,7 +14,7 @@ import type {
 
 const WORKOUT_LIBRARY_KEY = 'sprintlab.workouts.v1';
 const WORKOUT_LIBRARY_SCHEMA_VERSION = 1 as const;
-const WORKOUT_LIBRARY_SEED_VERSION = 4 as const;
+const WORKOUT_LIBRARY_SEED_VERSION = 5 as const;
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const now = () => new Date().toISOString();

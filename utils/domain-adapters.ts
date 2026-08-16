@@ -150,14 +150,16 @@ export function plannedWorkoutToDomainWorkout(plan: PlannedWorkout): Workout {
       : sum, 0);
   const requiredEquipment = [...new Set(sections.flatMap(section => section.exercises.flatMap(exercise => exercise.equipment)))];
   const allowedSurfaces = [...new Set(sections.flatMap(section => section.exercises.flatMap(exercise => exercise.surface)))];
-  const eventPathways: SprintEvent[] = ['100m', '200m', '400m'];
+  const eventPathways: SprintEvent[] = plan.eventTags?.length
+    ? [...plan.eventTags]
+    : ['100m', '200m', '400m'];
   const seasonPhases: SeasonPhase[] = ['general-preparation', 'specific-preparation', 'pre-competition', 'competition'];
   return {
     id: plan.id,
     name: plan.title,
     description: plan.purpose,
     purpose: plan.purpose,
-    trainingCategory: inferWorkoutCategory(plan),
+    trainingCategory: plan.category ?? inferWorkoutCategory(plan),
     eventPathways,
     athleteLevels: ['developing', 'intermediate', 'advanced'],
     seasonPhases,
@@ -203,12 +205,20 @@ function readinessToDomain(session: ActiveWorkoutSession, review: PostWorkoutRev
     focus: oneToFive(readiness?.focus),
     motivation: null,
     stress: null,
-    fuelHydrated: readiness?.fuelHydrated ?? null,
+    fuelHydrated: readiness?.hydrated !== undefined || readiness?.foodStatus !== undefined
+      ? readiness?.hydrated === true && readiness?.foodStatus !== 'underfueled'
+      : readiness?.fuelHydrated ?? null,
     generalSoreness: zeroToTen(readiness?.soreness ?? review.soreness),
     hamstringSoreness: zeroToTen(review.hamstring),
     achillesSoreness: null,
     painAreas,
-    warmupFeeling: 'not-recorded',
+    warmupFeeling: readiness?.warmupReassessment === 'better'
+      ? 'better'
+      : readiness?.warmupReassessment === 'same'
+        ? 'same'
+        : readiness?.warmupReassessment === 'worse'
+          ? 'worse'
+          : 'not-recorded',
     notes: readiness?.painNotes ?? '',
   };
 }

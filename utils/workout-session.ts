@@ -46,6 +46,8 @@ function normalizeExercise(sectionTitle: string, raw: Partial<PlannedExercise> &
     id: raw.id,
     name: raw.name,
     detail: raw.detail,
+    prescriptionOverride: raw.prescriptionOverride,
+    cue: raw.cue,
     tracking: raw.tracking ?? inferTracking(sectionTitle, raw.detail),
   };
 }
@@ -66,6 +68,12 @@ export function normalizePlannedWorkout(raw: unknown, fallback: PlannedWorkout):
     title: String(candidate.title ?? fallback.title),
     purpose: String(candidate.purpose ?? fallback.purpose),
     durationMinutes: normalizeDuration(candidate),
+    category: typeof candidate.category === 'string'
+      ? candidate.category as PlannedWorkout['category']
+      : fallback.category,
+    eventTags: Array.isArray(candidate.eventTags)
+      ? candidate.eventTags as PlannedWorkout['eventTags']
+      : fallback.eventTags,
     sections: candidate.sections.map((section: any) => ({
       title: String(section.title),
       exercises: Array.isArray(section.exercises)
@@ -177,6 +185,7 @@ export function createActiveSession(
     readinessStatus: readiness.status,
     readinessSnapshot: clone(readiness),
     startedAt: new Date().toISOString(),
+    executionStartedAt: undefined,
     elapsedSeconds: 0,
     trainingContext: createTrainingContext(readiness),
     actualResults: snapshot.sections.flatMap(section =>

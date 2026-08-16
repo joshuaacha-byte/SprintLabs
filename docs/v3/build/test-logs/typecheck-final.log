@@ -1,0 +1,6 @@
+app/profile.tsx(633,49): error TS2345: Argument of type 'SprintEvent' is not assignable to parameter of type '"60m" | "100m" | "200m" | "400m"'.
+  Type '"300m"' is not assignable to type '"60m" | "100m" | "200m" | "400m"'.
+app/profile.tsx(662,64): error TS2345: Argument of type 'SprintEvent' is not assignable to parameter of type '"60m" | "100m" | "200m" | "400m"'.
+  Type '"300m"' is not assignable to type '"60m" | "100m" | "200m" | "400m"'.
+app/profile.tsx(776,47): error TS2345: Argument of type 'SprintEvent' is not assignable to parameter of type '"60m" | "100m" | "200m" | "400m"'.
+  Type '"300m"' is not assignable to type '"60m" | "100m" | "200m" | "400m"'.

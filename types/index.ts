@@ -2,10 +2,12 @@ import type {
   FootwearType,
   PainSeverity,
   PainReport,
+  SprintEvent,
   StartingMethod,
   TrainingLog as DomainTrainingLog,
   TrainingSurface,
   WeatherConditions,
+  WorkoutCategory,
 } from './domain';
 
 export type ExerciseTracking =
@@ -29,6 +31,10 @@ export type PlannedExercise = {
   id: string;
   name: string;
   detail?: string;
+  /** A workout-time prescription override without mutating the original plan. */
+  prescriptionOverride?: string;
+  /** The single most useful coaching cue for this exercise, when authored. */
+  cue?: string;
   tracking: ExerciseTracking;
 };
 
@@ -42,6 +48,8 @@ export type PlannedWorkout = {
   title: string;
   purpose: string;
   durationMinutes: number;
+  category?: WorkoutCategory;
+  eventTags?: SprintEvent[];
   sections: PlannedWorkoutSection[];
 };
 
@@ -72,6 +80,9 @@ export type ReadinessLocation =
   | 'foot-ankle'
   | 'other';
 
+export type ReadinessFuelStatus = 'normal' | 'fasted-usual' | 'underfueled';
+export type WarmupReassessment = 'better' | 'same' | 'worse';
+
 export type ReadinessDecision = {
   date: string;
   status: 'completed' | 'skipped';
@@ -79,6 +90,8 @@ export type ReadinessDecision = {
   sleepQuality?: number;
   neuralReadiness?: number;
   focus?: number;
+  foodStatus?: ReadinessFuelStatus;
+  hydrated?: boolean;
   fuelHydrated?: boolean;
   hasLocalizedIssue?: boolean;
   sensation?: ReadinessSensation;
@@ -89,6 +102,8 @@ export type ReadinessDecision = {
   readinessLevel?: ReadinessLevel;
   readinessReasons?: string[];
   readinessGuidance?: string;
+  warmupReassessment?: WarmupReassessment;
+  maximalSprintRestricted?: boolean;
   // Legacy prototype fields remain optional so existing local records still load.
   energy?: number;
   hamstring?: number;
@@ -160,6 +175,11 @@ export type ActualExerciseResult = {
   notes: string;
   trackReps?: TrackRepResult[];
   strengthSets?: StrengthSetResult[];
+  quickCompletionSnapshot?: {
+    status: ResultStatus;
+    trackRepStatuses?: ResultStatus[];
+    strengthSetStatuses?: ResultStatus[];
+  };
 };
 
 export type SessionTrainingContext = {
@@ -178,6 +198,8 @@ export type ActiveWorkoutSession = {
   readinessStatus: ReadinessDecision['status'];
   readinessSnapshot?: ReadinessDecision;
   startedAt: string;
+  // The session can be previewed before its execution clock begins.
+  executionStartedAt?: string;
   elapsedSeconds: number;
   trackConditions?: TrackConditions;
   // Required for new records; optional here so completed prototype records still load.
@@ -224,7 +246,12 @@ export type TrainingLogSummary = {
 export type FutureWorkoutOverride = {
   id: string;
   date: string;
-  workout: PlannedWorkout;
+  /** Defaults to 'workout' so existing stored records (which never set this) still load correctly. */
+  kind?: 'workout' | 'rest';
+  /** Required when kind is 'workout'; absent for a 'rest' override. */
+  workout?: PlannedWorkout;
+  restTitle?: string;
+  restNote?: string;
   sourceTrainingLogId?: string;
 };
 
@@ -296,6 +323,10 @@ export type {
   TrainingDemand,
   TrainingPlanMode,
   TrainingContext,
+  TrainingConcernArea,
+  TrainingConcernDetail,
+  TrainingConcernStatus,
+  TimeAwayDuration,
   TrainingLog,
   TrainingSurface,
   WarmupFeeling,
@@ -347,3 +378,11 @@ export type {
   PrehabRecommendationCard,
   SavedPrehabChoice,
 } from './prehab';
+
+export type {
+  CoachResponsePayload,
+  PlanChangeConfidence,
+  PlanChangeProposal,
+  PlanChangeType,
+} from './ai-plan-change';
+export { COACH_RESPONSE_JSON_SCHEMA, PLAN_CHANGE_TYPES } from './ai-plan-change';

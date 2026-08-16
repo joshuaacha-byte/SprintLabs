@@ -87,6 +87,13 @@ export type RecentSession = {
   manual: boolean;
 };
 
+export type TrainingVolumeSummary = {
+  completedSprintMeters: number;
+  highIntensityMeters: number;
+  lastSevenDaysMeters: number;
+  timedReps: number;
+};
+
 const pad = (value: number) => String(value).padStart(2, '0');
 
 export function toLocalDateKey(date: Date) {
@@ -118,25 +125,77 @@ export function sessionDateKey(session: CompletedWorkoutSession) {
   return session.scheduledDate ?? toLocalDateKey(new Date(session.startedAt));
 }
 
+export function buildTrainingVolumeSummary(
+  sessions: CompletedWorkoutSession[],
+  now = new Date(),
+): TrainingVolumeSummary {
+  const sevenDaysAgo = toLocalDateKey(addDays(new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12), -6));
+  return sessions.reduce<TrainingVolumeSummary>((summary, session) => {
+    let sessionMeters = 0;
+    session.actualResults.forEach(result => {
+      if (result.trackingKind !== 'track') return;
+      const exercise = plannedExercise(session, result.exerciseId);
+      const plannedDistance = exercise?.tracking.kind === 'track'
+        ? exercise.tracking.distanceMeters
+        : undefined;
+      (result.trackReps ?? []).forEach(rep => {
+        if (rep.status !== 'completed') return;
+        const distance = rep.plannedDistanceMeters ?? plannedDistance ?? 0;
+        sessionMeters += distance;
+        summary.completedSprintMeters += distance;
+        const intensity = rep.intensityTargetPercent
+          ?? (exercise?.tracking.kind === 'track' ? exercise.tracking.targetIntensity : undefined)
+          ?? 0;
+        if (intensity >= 90) summary.highIntensityMeters += distance;
+        if (typeof rep.timeSeconds === 'number' && rep.timeSeconds > 0) summary.timedReps += 1;
+      });
+    });
+    if (sessionDateKey(session) >= sevenDaysAgo) summary.lastSevenDaysMeters += sessionMeters;
+    return summary;
+  }, {
+    completedSprintMeters: 0,
+    highIntensityMeters: 0,
+    lastSevenDaysMeters: 0,
+    timedReps: 0,
+  });
+}
+
 function sessionsForDate(sessions: CompletedWorkoutSession[], date: string) {
   return sessions.filter(session => sessionDateKey(session) === date);
 }
 
-function scheduleForDate(schedule: ScheduledDay[], date: Date) {
-  return schedule.find(day => day.dayIndex === date.getDay());
+export type ScheduleHistoryEntry = { effectiveFrom: string; schedule: ScheduledDay[] };
+
+/** Resolves the recurring-plan version that was actually in effect on a given date, falling back to the current schedule if no earlier snapshot exists. */
+export function scheduleVersionForDate(
+  history: ScheduleHistoryEntry[],
+  currentSchedule: ScheduledDay[],
+  dateKey: string,
+): ScheduledDay[] {
+  const applicable = [...history]
+    .filter(entry => entry.effectiveFrom <= dateKey)
+    .sort((first, second) => second.effectiveFrom.localeCompare(first.effectiveFrom))[0];
+  return applicable ? applicable.schedule : currentSchedule;
+}
+
+function scheduleForDate(schedule: ScheduledDay[], history: ScheduleHistoryEntry[], date: Date) {
+  const dateKey = toLocalDateKey(date);
+  const version = scheduleVersionForDate(history, schedule, dateKey);
+  return version.find(day => day.dayIndex === date.getDay());
 }
 
 export function buildWeeklyProgress(
   schedule: ScheduledDay[],
   sessions: CompletedWorkoutSession[],
   now = new Date(),
+  history: ScheduleHistoryEntry[] = [],
 ): WeeklyProgress {
   const todayKey = toLocalDateKey(now);
   const monday = mondayFor(now);
   const days: WeekDayProgress[] = Array.from({ length: 7 }, (_, index) => {
     const date = addDays(monday, index);
     const dateKey = toLocalDateKey(date);
-    const scheduled = scheduleForDate(schedule, date);
+    const scheduled = scheduleForDate(schedule, history, date);
     const daySessions = sessionsForDate(sessions, dateKey);
     const hasCompleted = daySessions.some(session => session.review.completed);
     const hasPartial = daySessions.length > 0 && !hasCompleted;
@@ -182,6 +241,7 @@ export function buildScheduledSessionStreak(
   sessions: CompletedWorkoutSession[],
   now = new Date(),
   lookbackDays = 56,
+  history: ScheduleHistoryEntry[] = [],
 ) {
   const todayKey = toLocalDateKey(now);
   let streak = 0;
@@ -189,7 +249,7 @@ export function buildScheduledSessionStreak(
   for (let offset = 0; offset < lookbackDays; offset += 1) {
     const date = addDays(new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12), -offset);
     const dateKey = toLocalDateKey(date);
-    const scheduled = scheduleForDate(schedule, date);
+    const scheduled = scheduleForDate(schedule, history, date);
     if (!scheduled || scheduled.kind === 'rest') continue;
     const completed = sessionsForDate(sessions, dateKey).some(session => session.review.completed);
 

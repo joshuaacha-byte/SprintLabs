@@ -15,9 +15,15 @@ import type {
   ScheduledDay,
   TrainingDay,
   WeekdayIndex,
+  WorkoutCategory,
 } from '@/types';
 import { weekdayLabels } from '@/data/workouts';
 import { deriveSeasonPhase, meetWindowAllowsWorkout, seasonCalendarFromProfile } from '@/utils/season-engine';
+import {
+  buildWeeklyArchitecture,
+  type WeeklyArchitectureSlot,
+  type WeeklyLoadClass,
+} from '@/utils/weekly-architecture';
 import { isRecommendationEligible } from '@/utils/workout-library';
 
 export type SuggestedAlternative = {
@@ -27,8 +33,11 @@ export type SuggestedAlternative = {
 
 export type SuggestedPlanDay = {
   dayIndex: WeekdayIndex;
+  weeklyRole: string;
+  loadClass: WeeklyLoadClass;
   targetCategory: LibraryWorkoutCategory;
   workoutId: string;
+  supportWorkoutIds: string[];
   plannedWorkout: PlannedWorkout;
   whyThisFits: string[];
   harderOptionsExcluded: string[];
@@ -80,16 +89,6 @@ const defaultDayPatterns: Record<number, WeekdayIndex[]> = {
   5: [1, 2, 4, 5, 6],
 };
 
-const highCategories = new Set<LibraryWorkoutCategory>([
-  'acceleration',
-  'maximum-velocity',
-  'starts',
-  'speed-endurance',
-  'special-endurance',
-  'testing',
-  'meet-preparation',
-]);
-
 function unique<T>(values: T[]) {
   return [...new Set(values)];
 }
@@ -125,7 +124,7 @@ function availableSurfaces(profile: AthleteProfile) {
   if (profile.hillAccess === 'regular') surfaces.add('hill');
   if (profile.indoorAccess === 'regular') surfaces.add('indoor');
   if (profile.weightRoomAccess === 'regular') surfaces.add('gym');
-  if (profile.courtAccess === 'regular') surfaces.add('gym');
+  if (profile.courtAccess === 'regular') surfaces.add('court');
   if (profile.homeEquipment.includes('other') || profile.homeEquipment.includes('none')) surfaces.add('home');
   return surfaces;
 }
@@ -151,13 +150,17 @@ function equipmentTokenAvailable(token: string, profile: AthleteProfile) {
   return true;
 }
 
-function logisticsMatch(workout: LibraryWorkout, context: CandidateContext) {
-  const surfaceMatches = workout.surface.required.length === 0
-    || workout.surface.required.some(surface => context.surfaces.has(surface));
-  const equipmentMatches = workout.equipmentRequired.every(requirement =>
-    requirement.toLowerCase().split(/\s+or\s+/).some(option => equipmentTokenAvailable(option, context.profile)),
-  );
-  return surfaceMatches && equipmentMatches;
+function logisticsMatch(workout: LibraryWorkout, _context: CandidateContext) {
+  // Location and ordinary equipment were intentionally removed from onboarding.
+  // Missing answers must therefore mean "use the standard authored session and
+  // show its substitutions", not "the athlete has no track, blocks, or weights".
+  // Only genuinely specialized technology remains a recommendation gate.
+  return workout.equipmentRequired.every(requirement => {
+    const value = requirement.toLowerCase();
+    return !value.includes('force plate')
+      && !value.includes('towing system')
+      && !value.includes('assisted sprint');
+  });
 }
 
 function hardGateMatch(workout: LibraryWorkout, context: CandidateContext) {
@@ -169,25 +172,13 @@ function hardGateMatch(workout: LibraryWorkout, context: CandidateContext) {
     && logisticsMatch(workout, context);
 }
 
-function requestedCategories(profile: AthleteProfile, count: number): LibraryWorkoutCategory[] {
-  const goals = new Set(profile.speedGoals ?? []);
-  const categories: LibraryWorkoutCategory[] = [];
-  if (goals.has('first-step-quickness') || goals.has('acceleration') || goals.has('track-race-performance')) categories.push('acceleration');
-  if (goals.has('maximum-velocity') || goals.has('track-race-performance')) categories.push('maximum-velocity');
-  if (goals.has('speed-endurance') || profile.primaryEvent === '200m' || profile.primaryEvent === '400m') categories.push('speed-endurance');
-  if (goals.has('explosive-power')) categories.push(profile.weightRoomAccess === 'regular' ? 'strength' : 'plyometrics');
-  if (!categories.length) categories.push('acceleration', 'maximum-velocity');
-
-  const safeBase: LibraryWorkoutCategory[] = profile.primaryEvent === '400m'
-    ? ['acceleration', 'maximum-velocity', 'speed-endurance', 'strength', 'tempo-recovery']
-    : ['acceleration', 'maximum-velocity', 'speed-endurance', 'plyometrics', 'tempo-recovery'];
-  return unique([...categories, ...safeBase]).slice(0, count);
-}
-
 function selectedDays(profile: AthleteProfile) {
   const blocked = new Set<WeekdayIndex>();
-  blocked.add(dayIndexByTrainingDay[profile.preferredRestDay]);
+  if (profile.preferredRestDayAnswered !== false) {
+    blocked.add(dayIndexByTrainingDay[profile.preferredRestDay]);
+  }
   (profile.sportPracticeDays ?? []).forEach(day => blocked.add(dayIndexByTrainingDay[day]));
+  (profile.otherSportDays ?? []).forEach(day => blocked.add(dayIndexByTrainingDay[day]));
   (profile.gameOrCompetitionDays ?? []).forEach(value => {
     if (value in dayIndexByTrainingDay) {
       blocked.add(dayIndexByTrainingDay[value as TrainingDay]);
@@ -212,14 +203,29 @@ function selectedDays(profile: AthleteProfile) {
     });
   }
   const count = Math.min(5, Math.max(1, profile.trainingDaysPerWeek > 0 ? profile.trainingDaysPerWeek : 3));
-  return (defaultDayPatterns[count] ?? defaultDayPatterns[3]).filter(day => !blocked.has(day));
+  const preferred = defaultDayPatterns[count] ?? defaultDayPatterns[3];
+  const busySchoolDays = new Set((profile.busySchoolDays ?? []).map(day => dayIndexByTrainingDay[day]));
+  const chosen = preferred.filter(day => !blocked.has(day) && !busySchoolDays.has(day));
+  const calendarOrder: WeekdayIndex[] = [1, 2, 3, 4, 5, 6, 0];
+  for (const day of calendarOrder) {
+    if (chosen.length >= count) break;
+    if (!blocked.has(day) && !busySchoolDays.has(day) && !chosen.includes(day)) chosen.push(day);
+  }
+  for (const day of calendarOrder) {
+    if (chosen.length >= count) break;
+    if (!blocked.has(day) && !chosen.includes(day)) chosen.push(day);
+  }
+  return chosen.sort((a, b) => calendarOrder.indexOf(a) - calendarOrder.indexOf(b));
 }
 
 export function blockedWeekdayReasons(profile: AthleteProfile) {
   const reasons = new Map<WeekdayIndex, string[]>();
   const add = (day: WeekdayIndex, reason: string) => reasons.set(day, [...(reasons.get(day) ?? []), reason]);
-  add(dayIndexByTrainingDay[profile.preferredRestDay], 'Preferred rest day');
+  if (profile.preferredRestDayAnswered !== false) {
+    add(dayIndexByTrainingDay[profile.preferredRestDay], 'Preferred rest day');
+  }
   (profile.sportPracticeDays ?? []).forEach(day => add(dayIndexByTrainingDay[day], 'Team practice'));
+  (profile.otherSportDays ?? []).forEach(day => add(dayIndexByTrainingDay[day], 'Another sport'));
   (profile.gameOrCompetitionDays ?? []).forEach(value => {
     if (value in dayIndexByTrainingDay) {
       add(dayIndexByTrainingDay[value as TrainingDay], 'Recurring game or competition');
@@ -264,10 +270,42 @@ function rankedForCategory(
     .filter(workout => hardGateMatch(workout, context))
     .filter(workout => meetWindowAllowsWorkout(workout, context.season, date, calendar))
     .filter(workout => workout.primaryCategory === requested || workout.secondaryCategories.includes(requested))
-    .map(workout => ({ workout, score: categoryScore(workout, requested, context) - (usedIds.has(workout.id) ? 100 : 0) }))
+    .filter(workout => !usedIds.has(workout.id))
+    .map(workout => ({ workout, score: categoryScore(workout, requested, context) }))
     .sort((first, second) => second.score - first.score
       || first.workout.progressionLevel - second.workout.progressionLevel
       || first.workout.id.localeCompare(second.workout.id));
+}
+
+function rankedForSlot(
+  workouts: LibraryWorkout[],
+  slot: WeeklyArchitectureSlot,
+  context: CandidateContext,
+  usedIds: Set<string>,
+  dayIndex: WeekdayIndex,
+) {
+  const categories = [slot.targetCategory, ...slot.categoryAlternatives];
+  for (const category of categories) {
+    const ranked = rankedForCategory(workouts, category, context, usedIds, dayIndex)
+      .map(item => {
+        const preferredIndex = slot.preferredWorkoutIds.indexOf(item.workout.id);
+        return {
+          ...item,
+          score: item.score + (preferredIndex >= 0 ? Math.max(0, 30 - preferredIndex * 4) : 0),
+        };
+      })
+      .sort((first, second) => {
+        const firstPreferred = slot.preferredWorkoutIds.indexOf(first.workout.id);
+        const secondPreferred = slot.preferredWorkoutIds.indexOf(second.workout.id);
+        const firstRank = firstPreferred < 0 ? 99 : firstPreferred;
+        const secondRank = secondPreferred < 0 ? 99 : secondPreferred;
+        return firstRank - secondRank
+          || second.score - first.score
+          || first.workout.id.localeCompare(second.workout.id);
+      });
+    if (ranked.length) return { category, ranked };
+  }
+  return { category: slot.targetCategory, ranked: [] as { workout: LibraryWorkout; score: number }[] };
 }
 
 function formatRange(range?: [number, number]) {
@@ -292,11 +330,13 @@ function itemDetail(item: LibraryWorkoutItem) {
 
 function toPlannedExercise(item: LibraryWorkoutItem, section: 'warmup' | 'sprintWork' | 'plyometrics' | 'strength' | 'coreBodyweight' | 'cooldown'): PlannedExercise {
   const detail = itemDetail(item);
+  const cue = item.coachingCues[0];
   if (section === 'sprintWork' && item.distanceMeters) {
     return {
       id: item.id,
       name: item.name,
       detail,
+      cue,
       tracking: {
         kind: 'track',
         reps: Math.max(1, (item.sets ?? 1) * (item.reps ?? 1)),
@@ -311,6 +351,7 @@ function toPlannedExercise(item: LibraryWorkoutItem, section: 'warmup' | 'sprint
       id: item.id,
       name: item.name,
       detail,
+      cue,
       tracking: {
         kind: 'strength',
         sets: Math.max(1, item.sets ?? 1),
@@ -319,8 +360,36 @@ function toPlannedExercise(item: LibraryWorkoutItem, section: 'warmup' | 'sprint
       },
     };
   }
-  return { id: item.id, name: item.name, detail, tracking: { kind: 'completion' } };
+  return { id: item.id, name: item.name, detail, cue, tracking: { kind: 'completion' } };
 }
+
+/** Library primary categories are more granular than the domain WorkoutCategory a PlannedWorkout carries. */
+const libraryCategoryToWorkoutCategory: Record<LibraryWorkoutCategory, WorkoutCategory> = {
+  acceleration: 'acceleration',
+  'maximum-velocity': 'maximum-velocity',
+  starts: 'acceleration',
+  'speed-endurance': 'speed-endurance',
+  'special-endurance': 'special-endurance',
+  'tempo-recovery': 'tempo',
+  strength: 'strength',
+  plyometrics: 'plyometrics',
+  'core-bodyweight': 'strength',
+  testing: 'testing',
+  'meet-preparation': 'competition',
+  'multidirectional-acceleration': 'acceleration',
+  deceleration: 'acceleration',
+  'change-of-direction': 'mixed',
+  'reactive-agility': 'mixed',
+  'repeated-sprint-ability': 'speed-endurance',
+  'resisted-sprinting': 'acceleration',
+  'assisted-sprint-exposure': 'maximum-velocity',
+  'combine-preparation': 'competition',
+  'field-conditioning': 'mixed',
+  'court-speed': 'acceleration',
+  'explosive-power': 'plyometrics',
+  'sport-practice-recovery': 'recovery',
+  'game-day-preparation': 'competition',
+};
 
 export function libraryWorkoutToPlannedWorkout(workout: LibraryWorkout): PlannedWorkout {
   const mapSection = (key: 'warmup' | 'sprintWork' | 'plyometrics' | 'strength' | 'coreBodyweight' | 'cooldown', title: string) => ({
@@ -332,6 +401,8 @@ export function libraryWorkoutToPlannedWorkout(workout: LibraryWorkout): Planned
     title: workout.name,
     purpose: workout.purpose,
     durationMinutes: Math.round((workout.metrics.estimatedDurationMinutes[0] + workout.metrics.estimatedDurationMinutes[1]) / 2),
+    category: libraryCategoryToWorkoutCategory[workout.primaryCategory],
+    eventTags: workout.eventTags,
     sections: [
       mapSection('warmup', 'Warm-up'),
       mapSection('sprintWork', 'Track'),
@@ -343,32 +414,60 @@ export function libraryWorkoutToPlannedWorkout(workout: LibraryWorkout): Planned
   };
 }
 
+function pairPlannedWorkouts(primary: LibraryWorkout, support?: LibraryWorkout): PlannedWorkout {
+  const planned = libraryWorkoutToPlannedWorkout(primary);
+  if (!support) return planned;
+  const supportPlan = libraryWorkoutToPlannedWorkout(support);
+  const supportSections = supportPlan.sections
+    .filter(section => ['Strength', 'Core / bodyweight', 'Plyometrics'].includes(section.title))
+    .filter(section => section.exercises.length > 0)
+    .map(section => ({
+      ...section,
+      title: section.title === 'Strength' ? 'Strength · paired' : `${section.title} · paired`,
+    }));
+  return {
+    ...planned,
+    id: `${primary.id}+${support.id}`,
+    title: `${primary.name} + ${support.name}`,
+    purpose: `${primary.purpose} Paired with ${support.name.toLowerCase()} on the same high-output day.`,
+    durationMinutes: planned.durationMinutes + supportPlan.durationMinutes,
+    sections: [...planned.sections, ...supportSections],
+  };
+}
+
 function suggestionDetails(
   dayIndex: WeekdayIndex,
+  slot: WeeklyArchitectureSlot,
   requested: LibraryWorkoutCategory,
   ranked: { workout: LibraryWorkout; score: number }[],
   context: CandidateContext,
+  support?: LibraryWorkout,
 ): SuggestedPlanDay {
   const selected = ranked[0].workout;
   const why = [
-    `${selected.primaryCategory.replaceAll('-', ' ')} matches this day’s training target`,
+    `${slot.label} is the ${slot.loadClass}-output role assigned by this week’s ${context.event} microcycle`,
+    slot.rationale,
+    `${selected.primaryCategory.replaceAll('-', ' ')} matches that role`,
     `${context.event} and ${context.phase.replaceAll('-', ' ')} are approved for this record`,
     `${context.level.replaceAll('-', ' ')} experience is within the reviewed range`,
   ];
+  if (support) why.push(`${support.name} is an Approved strength pairing; its authored sets and exercises are included.`);
   const excluded: string[] = [];
-  if (context.level !== 'advanced') excluded.push('Advanced progressions stay locked until the required experience is present.');
-  if (!context.profile.startingBlocksAccess || context.profile.startingBlocksAccess === 'none') excluded.push('Block-dependent options were excluded because blocks were not selected.');
-  if (selected.metrics.highCns) excluded.push('The weekly layout avoids placing another high-speed session on the next day.');
+  if (selected.metrics.highCns) excluded.push('The next calendar role is lower output so high-speed work is not stacked blindly.');
+  if (context.phase === 'general-preparation') excluded.push('Special-endurance and race-model work stay out of this general-preparation week.');
   return {
     dayIndex,
+    weeklyRole: slot.label,
+    loadClass: slot.loadClass,
     targetCategory: requested,
     workoutId: selected.id,
-    plannedWorkout: libraryWorkoutToPlannedWorkout(selected),
+    supportWorkoutIds: support ? [support.id] : [],
+    plannedWorkout: pairPlannedWorkouts(selected, support),
     whyThisFits: why,
     harderOptionsExcluded: excluded,
     requiredSetup: [
       selected.surface.required.join(' or '),
-      selected.equipmentRequired.join(', '),
+      [...selected.equipmentRequired, ...(support?.equipmentRequired ?? [])].join(', '),
     ].filter(Boolean).join(' · ') || 'No special setup',
     stopRule: selected.safetyNotes[0] ?? 'Stop if pain or technique changes.',
     alternatives: ranked.slice(1, 3).map(item => ({ workoutId: item.workout.id, name: item.workout.name })),
@@ -381,8 +480,363 @@ function restDay(dayIndex: WeekdayIndex): ScheduledDay {
     shortLabel: weekdayLabels[dayIndex].short,
     fullLabel: weekdayLabels[dayIndex].full,
     kind: 'rest',
-    restTitle: 'Rest / existing training',
+    restTitle: 'Open / existing training',
     restNote: 'No SprintLab speed session is scheduled. Team practice, coach work, and recovery still count as training demands.',
+  };
+}
+
+type GeneralSpeedRole = {
+  label: string;
+  loadClass: WeeklyLoadClass;
+  category: LibraryWorkoutCategory;
+  preferredIds: string[];
+  pairStrength?: boolean;
+  rationale: string;
+};
+
+type GeneralSpeedTier = 'foundation' | 'trained' | 'advanced';
+
+const tierSuffix: Record<GeneralSpeedTier, '01' | '02' | '03'> = {
+  foundation: '01',
+  trained: '02',
+  advanced: '03',
+};
+
+function generalSpeedTier(level: LibraryAthleteLevel): GeneralSpeedTier {
+  if (level === 'advanced') return 'advanced';
+  if (level === 'trained') return 'trained';
+  return 'foundation';
+}
+
+function adjustedGeneralSpeedTier(
+  profile: AthleteProfile,
+  phase: ReturnType<typeof deriveSeasonPhase>['phase'],
+  level: LibraryAthleteLevel,
+) {
+  const startingTier = generalSpeedTier(level);
+  const shouldRegress = profile.currentPain === true
+    || profile.trainingContext === 'return-to-training'
+    || phase === 'taper';
+  if (!shouldRegress || startingTier === 'foundation') {
+    return { tier: startingTier, selectionLevel: level, reason: undefined };
+  }
+  const tier: GeneralSpeedTier = startingTier === 'advanced' ? 'trained' : 'foundation';
+  const selectionLevel: LibraryAthleteLevel = tier === 'trained' ? 'trained' : 'developing';
+  const cause = profile.currentPain
+    ? 'reported pain or limitation'
+    : profile.trainingContext === 'return-to-training'
+      ? 'return-to-training context'
+      : 'taper context';
+  return {
+    tier,
+    selectionLevel,
+    reason: `This session was reduced one reviewed level because of the athlete’s ${cause}.`,
+  };
+}
+
+function generalSpeedRoles(
+  sessionCount: number,
+  football: boolean,
+  inSeason: boolean,
+  level: LibraryAthleteLevel,
+  tier: GeneralSpeedTier,
+  limitedLinearSpace: boolean,
+): GeneralSpeedRole[] {
+  if (limitedLinearSpace) {
+    const limitedRoles: GeneralSpeedRole[] = [
+      {
+        label: 'Limited-space acceleration',
+        loadClass: 'moderate',
+        category: 'acceleration',
+        preferredIds: ['GEN-COURT-ACC-01'],
+        pairStrength: !inSeason,
+        rationale: 'The available court or indoor lane supports short acceleration, but not a fake maximum-velocity session.',
+      },
+      {
+        label: 'Movement and trunk support',
+        loadClass: 'low',
+        category: 'core-bodyweight',
+        preferredIds: ['CORE-02', 'CORE-01'],
+        rationale: 'General strength support fills a real need without pretending limited space can provide upright speed.',
+      },
+      {
+        label: 'Elastic movement foundation',
+        loadClass: 'low',
+        category: 'plyometrics',
+        preferredIds: ['PLY-01', 'CORE-02'],
+        rationale: 'Low-complexity jumps and landings support acceleration while preserving recovery.',
+      },
+      {
+        label: 'Low technical support',
+        loadClass: 'low',
+        category: 'tempo-recovery',
+        preferredIds: ['GEN-LOW-01', 'CORE-01'],
+        rationale: 'The fourth session stays low; a fifth filler workout is not added just because five days were available.',
+      },
+    ];
+    return limitedRoles.slice(0, Math.min(sessionCount, 4));
+  }
+
+  if (inSeason) {
+    const microdose: GeneralSpeedRole = {
+      label: 'In-season speed microdose',
+      loadClass: 'moderate',
+      category: 'maximum-velocity',
+      preferredIds: ['GEN-MICRO-01'],
+      rationale: 'A brief combined exposure maintains acceleration and upright speed without pretending practice load does not exist.',
+    };
+    const low: GeneralSpeedRole = {
+      label: 'In-season recovery support',
+      loadClass: 'low',
+      category: 'tempo-recovery',
+      preferredIds: ['GEN-LOW-01', 'TEM-03', 'CORE-01'],
+      rationale: 'The second day remains low so the sport schedule stays in control.',
+    };
+    const support: GeneralSpeedRole = {
+      label: 'Reduced strength support',
+      loadClass: 'low',
+      category: 'core-bodyweight',
+      preferredIds: ['CORE-01', 'GEN-LOW-01'],
+      rationale: 'Accessory volume is reduced in season rather than adding another demanding session.',
+    };
+    return [microdose, low, support].slice(0, Math.min(sessionCount, 3));
+  }
+
+  const acceleration: GeneralSpeedRole = {
+    label: football ? '40-yard acceleration' : 'Linear acceleration',
+    loadClass: 'high',
+    category: football ? 'combine-preparation' : 'acceleration',
+    preferredIds: football
+      ? [`F40-ACC-${tierSuffix[tier]}`]
+      : [`GEN-ACC-${tierSuffix[tier]}`],
+    pairStrength: true,
+    rationale: 'A quality acceleration exposure develops the first portion of linear speed with full recovery.',
+  };
+  const upright: GeneralSpeedRole = {
+    label: football ? 'Upright speed for the 20–40 yard segment' : 'Upright maximum velocity',
+    loadClass: 'high',
+    category: football ? 'combine-preparation' : 'maximum-velocity',
+    preferredIds: football
+      ? [`F40-MAX-${tierSuffix[tier]}`]
+      : [`GEN-MAX-${tierSuffix[tier]}`],
+    pairStrength: true,
+    rationale: 'Acceleration alone is incomplete; upright speed receives its own quality exposure.',
+  };
+  const lowTechnical: GeneralSpeedRole = {
+    label: 'Low technical / extensive work',
+    loadClass: 'low',
+    category: 'tempo-recovery',
+    preferredIds: ['GEN-LOW-01', 'TEM-03', 'CORE-02'],
+    rationale: 'This day stays genuinely lower output so it supports rather than competes with speed quality.',
+  };
+  const support: GeneralSpeedRole = {
+    label: 'Movement and trunk support',
+    loadClass: 'low',
+    category: 'core-bodyweight',
+    preferredIds: ['CORE-02', 'GEN-LOW-01'],
+    rationale: 'The separate support day stays low because primary strength work is already paired with the two quality speed days.',
+  };
+  const integration: GeneralSpeedRole = {
+    label: football ? '40-yard integration' : 'Acceleration integration',
+    loadClass: 'high',
+    category: football ? 'combine-preparation' : 'acceleration',
+    preferredIds: football ? ['F40-TRANSFER-01', 'GEN-INTEGRATE-01'] : ['GEN-INTEGRATE-01'],
+    pairStrength: false,
+    rationale: football
+      ? 'A third quality day is reserved for experienced five-day profiles and connects early acceleration with longer upright running.'
+      : 'A third quality exposure is used only in a five-day plan and remains separated from the other high-output days.',
+  };
+
+  if (sessionCount <= 2) return [acceleration, upright];
+  if (sessionCount === 3) return [acceleration, lowTechnical, upright];
+  if (sessionCount === 4) return [acceleration, lowTechnical, upright, support];
+  if (level === 'foundation' || level === 'developing') {
+    return [
+      acceleration,
+      lowTechnical,
+      upright,
+      support,
+      {
+        label: 'Elastic movement foundation',
+        loadClass: 'low',
+        category: 'plyometrics',
+        preferredIds: ['PLY-01', 'PLY-07', 'CORE-02'],
+        rationale: 'Newer athletes use the fifth day for movement quality instead of receiving a third demanding sprint exposure.',
+      },
+    ];
+  }
+  return [acceleration, lowTechnical, upright, support, integration];
+}
+
+function firstEligibleById(
+  workouts: LibraryWorkout[],
+  ids: string[],
+  profile: AthleteProfile,
+  season: ReturnType<typeof deriveSeasonPhase>,
+  selectionLevel?: LibraryAthleteLevel,
+) {
+  const surfaces = availableSurfaces(profile);
+  const level = selectionLevel ?? profileLevel(profile.experienceLevel);
+  if (season.phase === 'needs-calendar') return undefined;
+  const phase = season.phase;
+  const ordered = ids
+    .map(id => workouts.find(workout => workout.id === id))
+    .filter((workout): workout is LibraryWorkout => Boolean(workout));
+  return ordered.find(workout => isRecommendationEligible(workout)
+    && workout.athleteLevels.includes(level)
+    && workout.seasonPhases.includes(phase)
+    && logisticsMatch(workout, {
+    event: '100m',
+    pathway: 'shared',
+    level,
+    phase,
+    surfaces,
+    profile,
+    season,
+  }));
+}
+
+function buildGeneralSpeedWeek(
+  profile: AthleteProfile,
+  workouts: LibraryWorkout[],
+  days: WeekdayIndex[],
+  season: ReturnType<typeof deriveSeasonPhase>,
+): WeeklyPlanSuggestion {
+  if (season.phase === 'needs-calendar') {
+    return {
+      status: 'no-match',
+      title: 'Complete your training calendar',
+      message: 'SprintLab needs the current training context before matching a week.',
+      reasons: [season.explanation],
+    };
+  }
+  const phase = season.phase;
+  const sport = profile.primarySport ?? profile.sport ?? 'general-athletic-performance';
+  const football = sport === 'football';
+  const level = profileLevel(profile.experienceLevel);
+  const tierSelection = adjustedGeneralSpeedTier(profile, phase, level);
+  const surfaces = availableSurfaces(profile);
+  const limitedLinearSpace = false;
+  const roles = generalSpeedRoles(days.length, football, phase === 'competition', level, tierSelection.tier, limitedLinearSpace);
+  const suggestions: SuggestedPlanDay[] = [];
+  const failures: string[] = [];
+  const used = new Set<string>();
+
+  roles.forEach((role, index) => {
+    const dayIndex = days[index];
+    let primary = firstEligibleById(
+      workouts,
+      role.preferredIds.filter(id => !used.has(id)),
+      profile,
+      season,
+      tierSelection.selectionLevel,
+    );
+    if (!primary) {
+      const safeFallbacks = phase === 'competition'
+        ? ['GEN-MICRO-01', 'GEN-LOW-01', 'CORE-01']
+        : [
+            `${football ? 'F40' : 'GEN'}-ACC-${tierSuffix[tierSelection.tier]}`,
+            `${football ? 'F40' : 'GEN'}-MAX-${tierSuffix[tierSelection.tier]}`,
+            'GEN-LOW-01',
+            'STR-03',
+            'CORE-02',
+          ];
+      primary = firstEligibleById(
+        workouts,
+        safeFallbacks.filter(id => !used.has(id)),
+        profile,
+        season,
+        tierSelection.selectionLevel,
+      );
+    }
+    if (!primary) {
+      failures.push(`${weekdayLabels[dayIndex].full}: no Approved session matches this weekly role and training phase.`);
+      return;
+    }
+
+    let strength: LibraryWorkout | undefined;
+    if (role.pairStrength) {
+      const strengthIds = index % 2 === 0
+        ? ['STR-01', 'STR-02']
+        : ['STR-02', 'STR-01'];
+      strength = firstEligibleById(workouts, strengthIds.filter(id => id !== primary?.id && !used.has(id)), profile, season);
+    }
+    const plannedWorkout = pairPlannedWorkouts(primary, strength);
+    const alternatives = role.preferredIds
+      .map(id => workouts.find(workout => workout.id === id))
+      .filter((workout): workout is LibraryWorkout => Boolean(
+        workout
+        && workout.id !== primary?.id
+        && isRecommendationEligible(workout)
+        && workout.athleteLevels.includes(tierSelection.selectionLevel)
+        && workout.seasonPhases.includes(phase),
+      ))
+      .slice(0, 2)
+      .map(workout => ({ workoutId: workout.id, name: workout.name }));
+    suggestions.push({
+      dayIndex,
+      weeklyRole: role.label,
+      loadClass: role.loadClass,
+      targetCategory: role.category,
+      workoutId: primary.id,
+      supportWorkoutIds: strength ? [strength.id] : [],
+      plannedWorkout,
+      whyThisFits: [
+        role.rationale,
+        `${primary.name} is an authored, Approved library session.`,
+        football
+          ? 'The researched 40-yard pathway separates early acceleration from upright-speed exposure.'
+          : 'This general linear-speed foundation develops acceleration, upright speed, and repeatable sprint quality.',
+        strength
+          ? `${strength.name} is paired on the same output day so strength does not create another hard sprint day.`
+          : 'No separate strength pairing was added to this role.',
+        ...(tierSelection.reason ? [tierSelection.reason] : []),
+      ],
+      harderOptionsExcluded: [
+        'Change-of-direction and sport-skill prescriptions are excluded until dedicated sport pathways are reviewed.',
+        role.loadClass === 'low' ? 'Maximal sprinting is intentionally excluded from this lower-output day.' : 'Volume stays secondary to high-quality sprinting and full recovery.',
+      ],
+      requiredSetup: [
+        primary.surface.required.join(' or '),
+        [...primary.equipmentRequired, ...(strength?.equipmentRequired ?? [])].join(', '),
+      ].filter(Boolean).join(' · ') || 'No special setup',
+      stopRule: primary.safetyNotes[0] ?? 'Stop if pain or technique changes.',
+      alternatives,
+    });
+    used.add(primary.id);
+    if (strength) used.add(strength.id);
+  });
+
+  if (failures.length || suggestions.length !== roles.length) {
+    return {
+      status: 'no-match',
+      title: 'A complete safe week could not be matched',
+      message: 'SprintLab will not fill missing days with random sessions.',
+      reasons: failures,
+    };
+  }
+  const suggestionByDay = new Map(suggestions.map(item => [item.dayIndex, item]));
+  const schedule = ([1, 2, 3, 4, 5, 6, 0] as WeekdayIndex[]).map(dayIndex => {
+    const suggestion = suggestionByDay.get(dayIndex);
+    return suggestion
+      ? { dayIndex, shortLabel: weekdayLabels[dayIndex].short, fullLabel: weekdayLabels[dayIndex].full, kind: 'workout' as const, workout: suggestion.plannedWorkout }
+      : restDay(dayIndex);
+  });
+  const high = suggestions.filter(item => item.loadClass === 'high').length;
+  const low = suggestions.filter(item => item.loadClass === 'low').length;
+  return {
+    status: 'ready',
+    schedule,
+    suggestions,
+    summary: football
+      ? `${suggestions.length} training days in the researched 40-yard pathway: ${high} quality speed, ${low} lower-output/support, and ${7 - suggestions.length} protected open/rest days. ${season.explanation}`
+      : `${suggestions.length} general linear-speed training days: ${high} quality speed, ${low} lower-output/support, and ${7 - suggestions.length} protected open/rest days. The week develops acceleration, upright speed, and supporting qualities around the athlete’s schedule.`,
+    warnings: [
+      'This preview does not change the current plan until you save it.',
+      'Practice, competition, and the preferred full rest day were excluded before sessions were matched.',
+      ...(limitedLinearSpace ? ['A true upright-speed day was excluded because the saved training space does not provide a safe longer sprint lane.'] : []),
+      'The app organizes training; it does not diagnose injuries or replace qualified coaching.',
+    ],
   };
 }
 
@@ -390,26 +844,22 @@ export function buildDeterministicWeeklyPlan(
   profile: AthleteProfile,
   workouts: LibraryWorkout[],
 ): WeeklyPlanSuggestion {
-  if (profile.trainingPlanMode === 'log-coach-plan' || profile.loggingOnlyMode) {
+  if (profile.loggingOnlyMode) {
+    return {
+      status: 'coach-managed',
+      title: 'Logging mode is ready',
+      message: 'SprintLab will not create a training calendar in logging mode.',
+      reasons: ['Record planned or unplanned sessions whenever you train.', 'The Library, workout execution, History, and Progress remain available.'],
+    };
+  }
+  if (profile.trainingPlanMode === 'log-coach-plan') {
     return {
       status: 'coach-managed',
       title: 'Your coach plan stays in control',
-      message: 'SprintLab will not replace a coach-created or logging-only plan.',
+      message: 'SprintLab will not generate or replace coach-created sessions.',
       reasons: ['You can keep editing the weekly schedule manually.', 'Workout execution, History, and Progress remain available.'],
     };
   }
-  const primarySport = profile.primarySport ?? profile.sport ?? 'track-and-field';
-  if (primarySport !== 'track-and-field') {
-    return {
-      status: 'unsupported-sport',
-      title: 'Track is the first complete planning pathway',
-      message: 'Your profile and logs support multiple sports, but reviewed automatic plans are currently limited to track & field.',
-      reasons: profile.sports?.includes('track-and-field')
-        ? ['Set Track & field as the main profile focus to preview the track pathway.']
-        : ['Keep logging your speed work while sport-specific libraries are reviewed.'],
-    };
-  }
-
   const season = deriveSeasonPhase(profile);
   if (season.phase === 'needs-calendar') {
     return {
@@ -418,6 +868,20 @@ export function buildDeterministicWeeklyPlan(
       message: 'SprintLab will not guess your season phase.',
       reasons: [season.explanation],
     };
+  }
+
+  const days = selectedDays(profile);
+  if (!days.length) {
+    return {
+      status: 'no-match',
+      title: 'No open speed-training day',
+      message: 'The selected rest day, practices, and competitions occupy every available day.',
+      reasons: ['Change the preferred rest day, practice schedule, or available speed-training days before building a week.'],
+    };
+  }
+  const primarySport = profile.primarySport ?? profile.sport ?? 'track-and-field';
+  if (primarySport !== 'track-and-field') {
+    return buildGeneralSpeedWeek(profile, workouts, days, season);
   }
 
   const context: CandidateContext = {
@@ -429,50 +893,50 @@ export function buildDeterministicWeeklyPlan(
     profile,
     season,
   };
-  const days = selectedDays(profile);
-  if (!days.length) {
-    return {
-      status: 'no-match',
-      title: 'No open speed-training day',
-      message: 'The selected rest day, practices, and competitions occupy every available day.',
-      reasons: ['Change the preferred rest day, practice schedule, or available speed-training days before building a week.'],
-    };
-  }
-  const categories = requestedCategories(profile, days.length);
+  const architecture = buildWeeklyArchitecture({
+    event: context.event,
+    phase: context.phase,
+    level: profile.experienceLevel,
+    sessionCount: days.length,
+  });
   const usedIds = new Set<string>();
   const suggestions: SuggestedPlanDay[] = [];
   const failures: string[] = [];
 
   days.forEach((dayIndex, index) => {
-    let requested = categories[index] ?? 'tempo-recovery';
-    const previousDay = index > 0 ? days[index - 1] : null;
-    const previousSuggestion = suggestions[index - 1];
-    const consecutive = previousDay !== null && ((dayIndex - previousDay + 7) % 7 === 1);
-    const previousWorkout = previousSuggestion
-      ? workouts.find(workout => workout.id === previousSuggestion.workoutId)
-      : undefined;
-    const previousWasHighCns = Boolean(previousWorkout?.metrics.highCns);
-    if (consecutive && previousWasHighCns && highCategories.has(requested)) {
-      requested = index === days.length - 1 && profile.weightRoomAccess === 'regular' ? 'strength' : 'tempo-recovery';
-    }
-    let ranked = rankedForCategory(workouts, requested, context, usedIds, dayIndex);
-    if (consecutive && previousWasHighCns) {
-      ranked = ranked.filter(item => !item.workout.metrics.highCns);
-    }
-    if (!ranked.length && requested !== 'tempo-recovery') {
-      ranked = rankedForCategory(workouts, 'tempo-recovery', context, usedIds, dayIndex);
-      if (consecutive && previousWasHighCns) {
-        ranked = ranked.filter(item => !item.workout.metrics.highCns);
-      }
-      if (ranked.length) requested = 'tempo-recovery';
-    }
+    const slot = architecture[index];
+    const match = rankedForSlot(workouts, slot, context, usedIds, dayIndex);
+    const requested = match.category;
+    const ranked = match.ranked;
     if (!ranked.length) {
-      failures.push(`${weekdayLabels[dayIndex].full}: no Approved ${requested.replaceAll('-', ' ')} record matches the selected event, phase, level, surface, and equipment.`);
+      failures.push(`${weekdayLabels[dayIndex].full} (${slot.label}): no Approved record matches the event, phase, experience, and weekly role. SprintLab did not replace it with generic tempo.`);
       return;
     }
-    const detail = suggestionDetails(dayIndex, requested, ranked, context);
+    let support: LibraryWorkout | undefined;
+    if (slot.pairStrength) {
+      const preferredStrengthIds = index % 2 === 0
+        ? ['STR-01', 'STR-02']
+        : ['STR-02', 'STR-01'];
+      const supportSlot: WeeklyArchitectureSlot = {
+        id: `${slot.id}-support`,
+        label: 'Paired strength',
+        loadClass: 'moderate',
+        targetCategory: 'strength',
+        categoryAlternatives: ['core-bodyweight'],
+        preferredWorkoutIds: preferredStrengthIds,
+        pairStrength: false,
+        rationale: 'Consolidate compatible strength on a high-output day.',
+      };
+      support = rankedForSlot(workouts, supportSlot, context, usedIds, dayIndex).ranked[0]?.workout;
+      if (!support) {
+        failures.push(`${weekdayLabels[dayIndex].full} (${slot.label}): no Approved strength pairing matches this experience level and phase.`);
+        return;
+      }
+    }
+    const detail = suggestionDetails(dayIndex, slot, requested, ranked, context, support);
     suggestions.push(detail);
-    usedIds.add(detail.workoutId);
+    usedIds.add(ranked[0].workout.id);
+    support && usedIds.add(support.id);
   });
 
   if (!suggestions.length || failures.length) {
@@ -502,7 +966,7 @@ export function buildDeterministicWeeklyPlan(
     status: 'ready',
     schedule,
     suggestions,
-    summary: `${suggestions.length} Approved track sessions for a ${context.event} athlete in ${context.phase.replaceAll('-', ' ')}. ${season.explanation}`,
+    summary: `${suggestions.length} structured training days for a ${context.event} athlete in ${context.phase.replaceAll('-', ' ')}: ${suggestions.filter(item => item.loadClass === 'high').length} high-output, ${suggestions.filter(item => item.loadClass === 'low').length} lower-output, and ${7 - suggestions.length} protected open/rest days. ${season.explanation}`,
     warnings: [
       'This preview does not change the current plan until you save it.',
       'Daily readiness can still be a reason to stop, modify, or consult a coach.',
@@ -523,6 +987,7 @@ export function replaceSuggestedWorkout(
   const nextDay: SuggestedPlanDay = {
     ...current,
     workoutId: replacement.id,
+    supportWorkoutIds: [],
     plannedWorkout: libraryWorkoutToPlannedWorkout(replacement),
     whyThisFits: [
       `${replacement.primaryCategory.replaceAll('-', ' ')} is an Approved alternative for this day`,

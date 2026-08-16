@@ -3,56 +3,104 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Card, Eyebrow, ScreenTitle } from '@/components/sprint-ui';
-import { AppFooter } from '@/components/app-footer';
 import { formatTrackConditions } from '@/constants/logging';
-import { palette } from '@/constants/sprintlab';
-import { AthleteProfile, CompletedWorkoutSession, ScheduledDay, TrainingLogSummary } from '@/types';
-import { getAthleteProfile } from '@/utils/athlete-profile';
-import { deriveSeasonPhase } from '@/utils/season-engine';
+import { Palette, useTheme } from '@/constants/sprintlab';
+import type { CompletedWorkoutSession, ScheduledDay, TrainingLogSummary } from '@/types';
 import {
-  buildRecentSessions,
   buildRecoveryTrend,
-  buildScheduledSessionStreak,
   buildSprintSeries,
+  buildTrainingVolumeSummary,
   buildWeeklyProgress,
   formatProgressDate,
   RecoveryDay,
+  ScheduleHistoryEntry,
+  sessionDateKey,
   SprintSeries,
   WeekDayProgress,
 } from '@/utils/progress';
-import { getCompletedWorkoutSessions, getLogs, getWeekSchedule } from '@/utils/storage';
+import { getCompletedWorkoutSessions, getLogs, getScheduleHistory, getWeekSchedule } from '@/utils/storage';
+import { selection, tap } from '@/utils/haptics';
+import { calculateConsistencyStreak, calculatePlanStreak } from '@/utils/streaks';
 
-const statusMeta = {
-  completed: { label: 'Done', symbol: '✓', color: palette.accent, background: palette.accentDark },
+type PeriodWeeks = 4 | 8 | 12;
+type DetailKey = 'performance' | 'training' | 'recovery';
+
+const createStatusMeta = (palette: Palette) => ({
+  completed: { label: 'Completed', symbol: '✓', color: palette.accent, background: palette.accentDark },
   partial: { label: 'Partial', symbol: '◐', color: palette.orange, background: '#2A1B0C' },
   missed: { label: 'Missed', symbol: '×', color: palette.red, background: '#301719' },
   rest: { label: 'Rest', symbol: '–', color: palette.muted, background: palette.surface2 },
   today: { label: 'Today', symbol: '•', color: palette.accent, background: palette.surface2 },
-  upcoming: { label: 'Upcoming', symbol: '', color: palette.muted, background: palette.surface2 },
-} as const;
+  upcoming: { label: 'Future', symbol: '○', color: palette.muted, background: palette.surface2 },
+} as const);
+
+const toDateKey = (date: Date) => {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
+
+const periodStartKey = (weeks: PeriodWeeks, now: Date) => {
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
+  start.setDate(start.getDate() - ((weeks * 7) - 1));
+  return toDateKey(start);
+};
 
 export default function ProgressScreen() {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
   const [logs, setLogs] = useState<TrainingLogSummary[]>([]);
   const [sessions, setSessions] = useState<CompletedWorkoutSession[]>([]);
   const [schedule, setSchedule] = useState<ScheduledDay[]>([]);
-  const [athlete, setAthlete] = useState<AthleteProfile | null>(null);
+  const [scheduleHistory, setScheduleHistory] = useState<ScheduleHistoryEntry[]>([]);
   const [selectedSeriesKey, setSelectedSeriesKey] = useState<string>();
+  const [periodWeeks, setPeriodWeeks] = useState<PeriodWeeks>(4);
+  const [expanded, setExpanded] = useState<Record<DetailKey, boolean>>({
+    performance: false,
+    training: false,
+    recovery: false,
+  });
+  const now = useMemo(() => new Date(), []);
 
   useFocusEffect(useCallback(() => {
-    Promise.all([getLogs(), getCompletedWorkoutSessions(), getWeekSchedule(), getAthleteProfile()])
-      .then(([savedLogs, completedSessions, savedSchedule, profile]) => {
+    Promise.all([getLogs(), getCompletedWorkoutSessions(), getWeekSchedule(), getScheduleHistory()])
+      .then(([savedLogs, completedSessions, savedSchedule, history]) => {
         setLogs(savedLogs);
         setSessions(completedSessions);
         setSchedule(savedSchedule);
-        setAthlete(profile);
+        setScheduleHistory(history);
       });
   }, []));
 
-  const weekly = useMemo(() => buildWeeklyProgress(schedule, sessions), [schedule, sessions]);
-  const streak = useMemo(() => buildScheduledSessionStreak(schedule, sessions), [schedule, sessions]);
-  const sprintSeries = useMemo(() => buildSprintSeries(sessions), [sessions]);
+  const weekly = useMemo(
+    () => buildWeeklyProgress(schedule, sessions, now, scheduleHistory),
+    [now, schedule, scheduleHistory, sessions],
+  );
+  const planStreak = useMemo(
+    () => calculatePlanStreak(schedule, sessions, now, scheduleHistory),
+    [now, schedule, scheduleHistory, sessions],
+  );
+  const consistencyStreak = useMemo(
+    () => calculateConsistencyStreak(schedule, sessions, now, scheduleHistory),
+    [now, schedule, scheduleHistory, sessions],
+  );
+  const cutoff = useMemo(() => periodStartKey(periodWeeks, now), [now, periodWeeks]);
+  const periodSessions = useMemo(
+    () => sessions.filter(session => sessionDateKey(session) >= cutoff),
+    [cutoff, sessions],
+  );
+  const sprintSeries = useMemo(() => buildSprintSeries(periodSessions), [periodSessions]);
   const recovery = useMemo(() => buildRecoveryTrend(logs), [logs]);
-  const recent = useMemo(() => buildRecentSessions(logs, sessions), [logs, sessions]);
+  const periodVolume = useMemo(
+    () => buildTrainingVolumeSummary(periodSessions, now),
+    [now, periodSessions],
+  );
+  const allTimeVolume = useMemo(() => buildTrainingVolumeSummary(sessions, now), [now, sessions]);
+  const strengthSessions = useMemo(() => periodSessions.filter(session =>
+    session.actualResults.some(result =>
+      result.trackingKind === 'strength'
+      && (result.status === 'completed' || result.strengthSets?.some(set => set.status === 'completed')),
+    ),
+  ).length, [periodSessions]);
 
   useEffect(() => {
     if (!sprintSeries.length) {
@@ -60,171 +108,423 @@ export default function ProgressScreen() {
       return;
     }
     if (!selectedSeriesKey || !sprintSeries.some(series => series.key === selectedSeriesKey)) {
-      setSelectedSeriesKey(sprintSeries[0].key);
+      const strongest = sprintSeries.find(series => series.points.length >= 2) ?? sprintSeries[0];
+      setSelectedSeriesKey(strongest.key);
     }
   }, [selectedSeriesKey, sprintSeries]);
 
   const selectedSeries = sprintSeries.find(series => series.key === selectedSeriesKey);
-  const target = athlete?.targetPerformances?.[0];
-  const currentBest = target ? athlete?.personalBests.find(best => best.event === target.event) : undefined;
-  const season = athlete ? deriveSeasonPhase(athlete) : null;
+  const performanceChange = useMemo(
+    () => selectedSeries && selectedSeries.points.length >= 2
+      ? describePerformanceChange(selectedSeries)
+      : undefined,
+    [selectedSeries],
+  );
+  const hasRecoveryData = recovery.days.some(day =>
+    day.sleep !== undefined || day.rpe !== undefined || day.soreness !== undefined,
+  );
+  const isNewAthlete = sessions.length === 0 && logs.length === 0;
 
-  return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.page}>
-    <Eyebrow>Your training data</Eyebrow>
-    <ScreenTitle subtitle="See whether the plan is getting done and how your training is changing.">Progress</ScreenTitle>
+  const toggleDetail = (key: DetailKey) => {
+    tap();
+    setExpanded(current => ({ ...current, [key]: !current[key] }));
+  };
 
-    {(target || season) ? <Card style={styles.directionCard}>
-      <View style={styles.directionGlow} />
-      <Eyebrow>Your direction</Eyebrow>
-      {target ? <View style={styles.targetRow}><View><Text style={styles.directionLabel}>{target.event} TARGET</Text><Text style={styles.targetValue}>{target.timeSeconds.toFixed(2)}s</Text></View><MaterialIcons name="flag" size={30} color={palette.accent} /></View> : null}
-      {currentBest ? <Text style={styles.directionCopy}>Saved personal best: {currentBest.timeSeconds.toFixed(2)}s. Progress is shown from recorded results—not a projected guarantee.</Text> : target ? <Text style={styles.directionCopy}>Record a verified performance when you have one. SprintLab will not invent a starting point.</Text> : null}
-      {season ? <View style={styles.phaseRow}><MaterialIcons name="event" size={18} color={palette.accent} /><View style={{ flex: 1 }}><Text style={styles.phaseTitle}>{season.phase.replaceAll('-', ' ')}</Text><Text style={styles.directionCopy}>{season.explanation}</Text></View></View> : null}
-    </Card> : null}
+  return <SafeAreaView style={styles.safe}>
+    <ScrollView contentContainerStyle={styles.page}>
+      <Eyebrow>Training change over time</Eyebrow>
+      <ScreenTitle subtitle="See whether your training, performance, and recovery are changing.">Progress</ScreenTitle>
 
-    <Card style={styles.weekCard}>
-      <View style={styles.weekHead}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.cardEyebrow}>THIS WEEK</Text>
-          <View style={styles.completionLine}><Text style={styles.heroValue}>{weekly.completed}</Text><Text style={styles.heroDivider}> / {weekly.due}</Text></View>
-          <Text style={styles.heroText}>scheduled sessions completed</Text>
+      {isNewAthlete ? <Card style={styles.onboardingCard}>
+        <View style={styles.onboardingIcon}>
+          <MaterialIcons name="insights" size={28} color={palette.accent} />
         </View>
-        <View style={styles.percentBadge}><Text style={styles.percentValue}>{weekly.percentage}%</Text><Text style={styles.percentLabel}>complete</Text></View>
-      </View>
-      <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${weekly.percentage}%` }]} /></View>
-      {weekly.partial > 0 ? <Text style={styles.partialCopy}>{weekly.partial} partial {weekly.partial === 1 ? 'session is' : 'sessions are'} recorded separately.</Text> : null}
-      <View style={styles.weekDays}>{weekly.days.map(day => <WeekDay key={day.date} day={day} />)}</View>
-      <View style={styles.weekLegend}>
-        {(['completed', 'partial', 'missed', 'rest'] as const).map(status => <View key={status} style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: statusMeta[status].color }]} /><Text style={styles.legendText}>{statusMeta[status].label}</Text></View>)}
-      </View>
-      <Text style={styles.planCaption}>Based on your current weekly plan. Rest and future days are excluded.</Text>
-    </Card>
+        <Text style={styles.onboardingTitle}>Your trends will build here</Text>
+        <Text style={styles.onboardingCopy}>Complete and log sessions to begin building your trends.</Text>
+      </Card> : <>
+        <SectionTitle eyebrow="Overview" title="Your current picture" />
+        <Card style={styles.overviewCard}>
+          <View style={styles.metricGrid}>
+            <SummaryMetric value={`${weekly.completed}/${weekly.due}`} label="Sessions this week" />
+            <SummaryMetric value={`${planStreak}`} label="Plan Streak · scheduled sessions completed in a row" />
+            <SummaryMetric value={`${consistencyStreak}`} label="Consistency Streak · weeks at 80%+ planned training" />
+            <SummaryMetric value={`${periodVolume.completedSprintMeters.toLocaleString()}m`} label={`${periodWeeks}-week speed volume`} />
+          </View>
+          {performanceChange ? <View style={styles.changeRow}>
+            <MaterialIcons name="trending-up" size={19} color={palette.accent} />
+            <Text style={styles.changeText}>{performanceChange}</Text>
+          </View> : null}
+        </Card>
 
-    <Card style={styles.streakCard}>
-      <View style={styles.streakIcon}><MaterialIcons name="local-fire-department" size={25} color={palette.accent} /></View>
-      <View style={{ flex: 1 }}><Text style={styles.streakValue}>{streak}</Text><Text style={styles.streakTitle}>scheduled {streak === 1 ? 'session' : 'sessions'} in a row</Text><Text style={styles.streakCopy}>Rest days never increase or break this consistency streak.</Text></View>
-    </Card>
+        <SectionTitle eyebrow="Performance" title="Timed sprint trends" />
+        {sprintSeries.length ? <>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.seriesTabs}>
+            {sprintSeries.map(series => <Pressable
+              key={series.key}
+              accessibilityRole="button"
+              accessibilityState={{ selected: selectedSeriesKey === series.key }}
+              onPress={() => { if (selectedSeriesKey !== series.key) selection(); setSelectedSeriesKey(series.key); }}
+              style={[styles.seriesTab, selectedSeriesKey === series.key && styles.seriesTabActive]}>
+              <Text style={[styles.seriesTabText, selectedSeriesKey === series.key && styles.seriesTabTextActive]}>{series.label}</Text>
+            </Pressable>)}
+          </ScrollView>
+          {selectedSeries && selectedSeries.points.length >= 2
+            ? <SprintHistory series={selectedSeries} expanded={expanded.performance} onToggle={() => toggleDetail('performance')} />
+            : <EmptyCard
+              icon="speed"
+              title="No performance trend yet"
+              copy="Record timed reps across multiple sessions to see changes."
+            />}
+        </> : <EmptyCard
+          icon="speed"
+          title="No performance trend yet"
+          copy="Record timed reps across multiple sessions to see changes."
+        />}
 
-    <SectionTitle title="Milestones" subtitle="Small markers for useful behavior—not extra workouts for points." />
-    <View style={styles.milestoneGrid}>
-      <Milestone icon="check-circle" title="First session" unlocked={sessions.length >= 1} />
-      <Milestone icon="history" title="Three honest logs" unlocked={logs.length >= 3} />
-      <Milestone icon="event-available" title="Week completed" unlocked={weekly.due > 0 && weekly.percentage === 100} />
-    </View>
+        <SectionTitle eyebrow="Training" title="Work completed" />
+        <PeriodSelector value={periodWeeks} onChange={setPeriodWeeks} />
+        <Card style={styles.trainingCard}>
+          <View style={styles.metricGrid}>
+            <SummaryMetric value={`${weekly.percentage}%`} label="Weekly completion" />
+            <SummaryMetric value={`${periodVolume.completedSprintMeters.toLocaleString()}m`} label="Speed volume" />
+            <SummaryMetric value={`${periodVolume.highIntensityMeters.toLocaleString()}m`} label="High intensity" />
+            <SummaryMetric value={`${strengthSessions}`} label="Strength sessions" />
+          </View>
+          <View style={styles.weekDivider} />
+          <View style={styles.weekDays}>{weekly.days.map(day => <WeekDay key={day.date} day={day} />)}</View>
+          <WeekLegend />
+          <Text style={styles.caption}>Future sessions and rest days do not count as missed work.</Text>
+          <DisclosureButton
+            open={expanded.training}
+            openLabel="Hide training details"
+            closedLabel="How these totals are counted"
+            onPress={() => toggleDetail('training')}
+          />
+          {expanded.training ? <View style={styles.detailNote}>
+            <Text style={styles.detailCopy}>Speed and high-intensity volume count only completed reps with recorded distance. Strength counts sessions with at least one completed strength exercise. Missing values are never guessed.</Text>
+          </View> : null}
+        </Card>
 
-    <SectionTitle title="Speed performance" subtitle="Session-best timed efforts, kept separate by distance and exercise." />
-    {sprintSeries.length ? <>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.seriesTabs}>
-        {sprintSeries.map(series => <Pressable key={series.key} onPress={() => setSelectedSeriesKey(series.key)} style={[styles.seriesTab, selectedSeriesKey === series.key && styles.seriesTabActive]}><Text style={[styles.seriesTabText, selectedSeriesKey === series.key && styles.seriesTabTextActive]}>{series.label}</Text></Pressable>)}
-      </ScrollView>
-      {selectedSeries ? <SprintHistory series={selectedSeries} /> : null}
-    </> : <EmptyCard icon="speed" title="No timed performance history yet" copy="Complete a speed rep and record its time to create the first distance-specific series." />}
+        <SectionTitle eyebrow="Recovery" title="Readiness patterns" />
+        {hasRecoveryData ? <Card style={styles.recoveryCard}>
+          <View style={styles.metricGrid}>
+            <RecoveryMetric label="Sleep" value={recovery.latest.sleep} suffix="h" />
+            <RecoveryMetric label="Session RPE" value={recovery.latest.rpe} suffix="/10" />
+            <RecoveryMetric label="Soreness" value={recovery.latest.soreness} suffix="/10" />
+          </View>
+          <DisclosureButton
+            open={expanded.recovery}
+            openLabel="Hide recovery trends"
+            closedLabel="View recovery trends"
+            onPress={() => toggleDetail('recovery')}
+          />
+          {expanded.recovery ? <View style={styles.trendsWrap}>
+            <TrendRow label="Sleep" suffix="h" max={12} values={recovery.days} dataKey="sleep" latest={recovery.latest.sleep} average={recovery.averages.sleep} color="#63C7FF" />
+            <TrendRow label="Session RPE" suffix="/10" max={10} values={recovery.days} dataKey="rpe" latest={recovery.latest.rpe} average={recovery.averages.rpe} color={palette.orange} />
+            <TrendRow label="General soreness" suffix="/10" max={10} values={recovery.days} dataKey="soreness" latest={recovery.latest.soreness} average={recovery.averages.soreness} color={palette.red} />
+          </View> : null}
+        </Card> : <EmptyCard
+          icon="favorite-border"
+          title="No recovery trend yet"
+          copy="Readiness check-ins will build your sleep, effort, and soreness trends."
+        />}
 
-    <SectionTitle title="Recovery trends" subtitle="Daily values from the last 14 days. Missing sleep is not counted as zero." />
-    <Card style={styles.trendsCard}>
-      <TrendRow label="Sleep" suffix="h" max={12} values={recovery.days} dataKey="sleep" latest={recovery.latest.sleep} average={recovery.averages.sleep} color="#63C7FF" />
-      <TrendRow label="Session RPE" suffix="/10" max={10} values={recovery.days} dataKey="rpe" latest={recovery.latest.rpe} average={recovery.averages.rpe} color={palette.orange} />
-      <TrendRow label="General soreness" suffix="/10" max={10} values={recovery.days} dataKey="soreness" latest={recovery.latest.soreness} average={recovery.averages.soreness} color={palette.red} />
-    </Card>
-
-    <SectionTitle title="Recent sessions" subtitle="The latest saved workouts and manual entries." />
-    {recent.length ? recent.map(item => <Card key={item.id} style={styles.recentCard}>
-      <View style={styles.recentRow}>
-        <View style={[styles.sessionStatus, item.completed && styles.sessionStatusDone]}><Text style={styles.sessionStatusText}>{item.completed ? '✓' : '–'}</Text></View>
-        <View style={{ flex: 1 }}>
-          <View style={styles.recentTitleRow}><Text style={styles.recentTitle}>{item.title}</Text>{item.manual ? <Text style={styles.manualChip}>MANUAL</Text> : null}</View>
-          <Text style={styles.recentMeta}>{new Date(item.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} · RPE {item.rpe}{item.sleep ? ` · ${item.sleep}h sleep` : ''}</Text>
-          {item.exercisesPlanned ? <Text style={styles.recentCoverage}>{item.exercisesCompleted ?? 0}/{item.exercisesPlanned} exercises completed</Text> : null}
-          {item.bestSprintTime ? <Text style={styles.recentSprint}>{item.bestSprintDistance ? `${item.bestSprintDistance}m · ` : ''}{item.bestSprintTime}s · {formatTrackConditions(item.conditions)}</Text> : null}
-        </View>
-      </View>
-    </Card>) : <EmptyCard icon="history" title="No saved sessions yet" copy="Finish a workout or log a past session to begin building progress." />}
-    <AppFooter />
-  </ScrollView></SafeAreaView>;
+        <SectionTitle eyebrow="Milestones" title="Useful markers" />
+        <Milestones
+          sessions={sessions}
+          logs={logs}
+          timedReps={allTimeVolume.timedReps}
+          sprintMeters={allTimeVolume.completedSprintMeters}
+        />
+      </>}
+    </ScrollView>
+  </SafeAreaView>;
 }
 
-function Milestone({ icon, title, unlocked }: { icon: React.ComponentProps<typeof MaterialIcons>['name']; title: string; unlocked: boolean }) {
-  return <View style={[styles.milestone, unlocked && styles.milestoneUnlocked]}><MaterialIcons name={icon} size={22} color={unlocked ? palette.accent : palette.muted} /><Text style={[styles.milestoneText, unlocked && { color: palette.text }]}>{title}</Text><Text style={styles.milestoneState}>{unlocked ? 'Earned' : 'In progress'}</Text></View>;
+function describePerformanceChange(series: SprintSeries) {
+  const first = series.points[0];
+  const latest = series.points[series.points.length - 1];
+  const difference = latest.timeSeconds - first.timeSeconds;
+  if (Math.abs(difference) < 0.005) return `${series.label} is stable across this period.`;
+  return `${series.label}: your latest result is ${Math.abs(difference).toFixed(2)}s ${difference < 0 ? 'faster' : 'slower'} than your first result in this period.`;
+}
+
+function SectionTitle({ eyebrow, title }: { eyebrow: string; title: string }) {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
+  return <View style={styles.sectionHead}>
+    <Text style={styles.sectionEyebrow}>{eyebrow}</Text>
+    <Text style={styles.sectionTitle}>{title}</Text>
+  </View>;
+}
+
+function SummaryMetric({ value, label }: { value: string; label: string }) {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
+  return <View style={styles.summaryMetric}>
+    <Text style={styles.summaryValue} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
+    <Text style={styles.summaryLabel}>{label}</Text>
+  </View>;
+}
+
+function RecoveryMetric({ label, value, suffix }: { label: string; value?: number; suffix: string }) {
+  return <SummaryMetric value={value === undefined ? '—' : `${value.toFixed(1)}${suffix}`} label={`Latest ${label.toLowerCase()}`} />;
+}
+
+function PeriodSelector({ value, onChange }: { value: PeriodWeeks; onChange: (value: PeriodWeeks) => void }) {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
+  return <View style={styles.periodSelector}>
+    {([4, 8, 12] as PeriodWeeks[]).map(period => <Pressable
+      key={period}
+      accessibilityRole="button"
+      accessibilityState={{ selected: value === period }}
+      onPress={() => { if (value !== period) selection(); onChange(period); }}
+      style={[styles.periodChip, value === period && styles.periodChipActive]}>
+      <Text style={[styles.periodText, value === period && styles.periodTextActive]}>{period} weeks</Text>
+    </Pressable>)}
+  </View>;
 }
 
 function WeekDay({ day }: { day: WeekDayProgress }) {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
+  const statusMeta = useMemo(() => createStatusMeta(palette), [palette]);
   const meta = statusMeta[day.status];
-  return <View style={styles.dayWrap}>
-    <View style={[styles.dayDot, { backgroundColor: meta.background, borderColor: day.status === 'today' ? palette.accent : meta.background }]}><Text style={[styles.daySymbol, { color: meta.color }]}>{meta.symbol}</Text></View>
+  return <View style={styles.dayWrap} accessibilityLabel={`${day.shortLabel}, ${meta.label}`}>
+    <View style={[styles.dayDot, {
+      backgroundColor: meta.background,
+      borderColor: day.status === 'today' ? palette.accent : palette.border,
+    }]}>
+      <Text style={[styles.daySymbol, { color: meta.color }]}>{meta.symbol}</Text>
+    </View>
     <Text style={styles.dayLabel}>{day.shortLabel}</Text>
   </View>;
 }
 
-function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) {
-  return <View style={styles.sectionHead}><Text style={styles.sectionTitle}>{title}</Text><Text style={styles.sectionCopy}>{subtitle}</Text></View>;
+function WeekLegend() {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
+  const statusMeta = useMemo(() => createStatusMeta(palette), [palette]);
+  return <View style={styles.weekLegend}>
+    {(['completed', 'partial', 'missed', 'rest', 'upcoming'] as const).map(status => <View key={status} style={styles.legendItem}>
+      <View style={[styles.legendDot, { backgroundColor: statusMeta[status].color }]} />
+      <Text style={styles.legendText}>{statusMeta[status].label}</Text>
+    </View>)}
+  </View>;
 }
 
-function SprintHistory({ series }: { series: SprintSeries }) {
+function DisclosureButton({ open, openLabel, closedLabel, onPress }: {
+  open: boolean;
+  openLabel: string;
+  closedLabel: string;
+  onPress: () => void;
+}) {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
+  return <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} onPress={onPress} style={styles.disclosure}>
+    <Text style={styles.disclosureText}>{open ? openLabel : closedLabel}</Text>
+    <MaterialIcons name={open ? 'expand-less' : 'expand-more'} size={21} color={palette.accent} />
+  </Pressable>;
+}
+
+function SprintHistory({ series, expanded, onToggle }: { series: SprintSeries; expanded: boolean; onToggle: () => void }) {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
   const chartPoints = series.points.slice(-6);
   const values = chartPoints.map(point => point.timeSeconds);
   const min = Math.min(...values);
   const max = Math.max(...values);
   return <Card style={styles.sprintCard}>
-    <View style={styles.sprintMetrics}>
-      <View><Text style={styles.metricLabel}>BEST</Text><Text style={styles.metricValue}>{series.best.timeSeconds}s</Text><Text style={styles.metricNote}>{formatProgressDate(series.best.date)}</Text></View>
-      <View><Text style={styles.metricLabel}>LATEST</Text><Text style={styles.metricValue}>{series.latest.timeSeconds}s</Text><Text style={styles.metricNote}>{formatProgressDate(series.latest.date)}</Text></View>
-      <View><Text style={styles.metricLabel}>SESSIONS</Text><Text style={styles.metricValue}>{series.points.length}</Text><Text style={styles.metricNote}>timed</Text></View>
+    <View style={styles.metricGrid}>
+      <SummaryMetric value={`${series.best.timeSeconds}s`} label="Best" />
+      <SummaryMetric value={`${series.latest.timeSeconds}s`} label="Latest" />
+      <SummaryMetric value={`${series.points.length}`} label="Comparable results" />
     </View>
     <View style={styles.chart}>
       {chartPoints.map(point => {
-        const height = min === max ? 56 : 34 + ((max - point.timeSeconds) / (max - min)) * 42;
+        const height = min === max ? 52 : 30 + ((max - point.timeSeconds) / (max - min)) * 46;
         const best = point.id === series.best.id;
-        return <View key={point.id} style={styles.chartPoint}><Text style={[styles.chartValue, best && { color: palette.accent }]}>{point.timeSeconds}</Text><View style={[styles.chartBar, { height, backgroundColor: best ? palette.accent : '#3D586C' }]} /><Text style={styles.chartDate}>{formatProgressDate(point.date, { month: 'numeric', day: 'numeric' })}</Text></View>;
+        return <View key={point.id} style={styles.chartPoint}>
+          <Text style={[styles.chartValue, best && { color: palette.accent }]}>{point.timeSeconds}</Text>
+          <View style={[styles.chartBar, { height, backgroundColor: best ? palette.accent : palette.border }]} />
+          <Text style={styles.chartDate}>{formatProgressDate(point.date, { month: 'numeric', day: 'numeric' })}</Text>
+        </View>;
       })}
     </View>
-    <Text style={styles.fasterNote}>Higher bars indicate faster session-best times.</Text>
-    <View style={styles.resultList}>{[...series.points].reverse().slice(0, 4).map(point => <View key={point.id} style={styles.resultRow}>
-      <View><Text style={styles.resultTime}>{point.timeSeconds}s</Text><Text style={styles.resultDate}>{formatProgressDate(point.date, { weekday: 'short', month: 'short', day: 'numeric' })}</Text></View>
-      <View style={{ flex: 1, alignItems: 'flex-end' }}><Text style={styles.resultConditions}>{formatTrackConditions(point.conditions)}</Text>{point.feeling ? <Text style={styles.resultFeeling}>{point.feeling.charAt(0).toUpperCase() + point.feeling.slice(1)}</Text> : null}</View>
-    </View>)}</View>
+    <Text style={styles.caption}>Higher bars indicate faster session-best times.</Text>
+    <DisclosureButton
+      open={expanded}
+      openLabel="Hide timed results"
+      closedLabel="View timed results"
+      onPress={onToggle}
+    />
+    {expanded ? <View style={styles.resultList}>
+      {[...series.points].reverse().slice(0, 6).map(point => <View key={point.id} style={styles.resultRow}>
+        <View>
+          <Text style={styles.resultTime}>{point.timeSeconds}s</Text>
+          <Text style={styles.resultDate}>{formatProgressDate(point.date, { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
+        </View>
+        <View style={styles.resultMeta}>
+          <Text style={styles.resultConditions}>{formatTrackConditions(point.conditions)}</Text>
+          {point.feeling ? <Text style={styles.resultFeeling}>{point.feeling.charAt(0).toUpperCase() + point.feeling.slice(1)}</Text> : null}
+        </View>
+      </View>)}
+    </View> : null}
   </Card>;
 }
 
-function TrendRow({ label, suffix, max, values, dataKey, latest, average, color }: { label: string; suffix: string; max: number; values: RecoveryDay[]; dataKey: 'sleep' | 'rpe' | 'soreness'; latest?: number; average?: number; color: string }) {
+function TrendRow({ label, suffix, max, values, dataKey, latest, average, color }: {
+  label: string;
+  suffix: string;
+  max: number;
+  values: RecoveryDay[];
+  dataKey: 'sleep' | 'rpe' | 'soreness';
+  latest?: number;
+  average?: number;
+  color: string;
+}) {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
   const format = (value?: number) => value === undefined ? '—' : `${value.toFixed(1)}${suffix}`;
   return <View style={styles.trendRow}>
-    <View style={styles.trendHead}><Text style={styles.trendLabel}>{label}</Text><View style={styles.trendNumbers}><Text style={[styles.trendLatest, { color }]}>Latest {format(latest)}</Text><Text style={styles.trendAverage}>Avg {format(average)}</Text></View></View>
+    <View style={styles.trendHead}>
+      <Text style={styles.trendLabel}>{label}</Text>
+      <View style={styles.trendNumbers}>
+        <Text style={[styles.trendLatest, { color }]}>Latest {format(latest)}</Text>
+        <Text style={styles.trendAverage}>Avg {format(average)}</Text>
+      </View>
+    </View>
     <View style={styles.trendBars}>{values.map(day => {
       const value = day[dataKey];
       const height = value === undefined ? 3 : Math.max(5, Math.min(42, (value / max) * 42));
-      return <View key={day.date} style={styles.trendBarSlot}><View style={[styles.trendBar, { height, backgroundColor: value === undefined ? palette.surface2 : color, opacity: value === undefined ? 0.6 : 1 }]} /></View>;
+      return <View key={day.date} style={styles.trendBarSlot}>
+        <View style={[styles.trendBar, {
+          height,
+          backgroundColor: value === undefined ? palette.surface2 : color,
+          opacity: value === undefined ? 0.6 : 1,
+        }]} />
+      </View>;
     })}</View>
     <View style={styles.trendAxis}><Text style={styles.axisText}>14 days ago</Text><Text style={styles.axisText}>Today</Text></View>
   </View>;
 }
 
-function EmptyCard({ icon, title, copy }: { icon: keyof typeof MaterialIcons.glyphMap; title: string; copy: string }) {
-  return <Card style={styles.emptyCard}><MaterialIcons name={icon} size={27} color={palette.muted} /><Text style={styles.emptyTitle}>{title}</Text><Text style={styles.emptyCopy}>{copy}</Text></Card>;
+type MilestoneItem = {
+  key: string;
+  icon: keyof typeof MaterialIcons.glyphMap;
+  title: string;
+  current: number;
+  target: number;
+};
+
+function Milestones({ sessions, logs, timedReps, sprintMeters }: {
+  sessions: CompletedWorkoutSession[];
+  logs: TrainingLogSummary[];
+  timedReps: number;
+  sprintMeters: number;
+}) {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
+  const strengthSessions = sessions.filter(session => session.actualResults.some(result =>
+    result.trackingKind === 'strength'
+    && (result.status === 'completed' || result.strengthSets?.some(set => set.status === 'completed')),
+  )).length;
+  const items: MilestoneItem[] = [
+    { key: 'first', icon: 'check-circle', title: 'First completed session', current: sessions.length, target: 1 },
+    { key: 'honest-logs', icon: 'history', title: 'Three sessions logged', current: Math.max(sessions.length, logs.length), target: 3 },
+    { key: 'timed', icon: 'timer', title: 'Timed sprint baseline', current: timedReps, target: 3 },
+    { key: 'volume', icon: 'straighten', title: '1,000 recorded sprint meters', current: sprintMeters, target: 1000 },
+    { key: 'strength', icon: 'fitness-center', title: 'Five strength sessions', current: strengthSessions, target: 5 },
+  ];
+  const earned = items.filter(item => item.current >= item.target).slice(-2);
+  const next = items
+    .filter(item => item.current < item.target)
+    .sort((first, second) => (second.current / second.target) - (first.current / first.target))
+    .slice(0, 2);
+
+  return <Card style={styles.milestonesCard}>
+    {earned.length ? <View style={styles.milestoneGroup}>
+      <Text style={styles.groupLabel}>Recently earned</Text>
+      {earned.map(item => <View key={item.key} style={styles.earnedRow}>
+        <View style={styles.earnedIcon}><MaterialIcons name={item.icon} size={18} color={palette.accent} /></View>
+        <Text style={styles.earnedTitle}>{item.title}</Text>
+        <MaterialIcons name="check" size={18} color={palette.accent} />
+      </View>)}
+    </View> : null}
+    {next.length ? <View style={styles.milestoneGroup}>
+      <Text style={styles.groupLabel}>Up next</Text>
+      {next.map(item => {
+        const progress = Math.min(100, Math.round((item.current / item.target) * 100));
+        return <View key={item.key} style={styles.nextMilestone}>
+          <View style={styles.nextHead}>
+            <Text style={styles.nextTitle}>{item.title}</Text>
+            <Text style={styles.nextCount}>{Math.min(item.current, item.target).toLocaleString()} of {item.target.toLocaleString()}</Text>
+          </View>
+          <View style={styles.milestoneTrack}><View style={[styles.milestoneFill, { width: `${progress}%` }]} /></View>
+        </View>;
+      })}
+    </View> : <Text style={styles.allEarned}>All current milestones earned. Keep logging honestly.</Text>}
+  </Card>;
 }
 
-const styles = StyleSheet.create({
+function EmptyCard({ icon, title, copy }: { icon: keyof typeof MaterialIcons.glyphMap; title: string; copy: string }) {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
+  return <Card style={styles.emptyCard}>
+    <MaterialIcons name={icon} size={25} color={palette.muted} />
+    <View style={styles.emptyText}>
+      <Text style={styles.emptyTitle}>{title}</Text>
+      <Text style={styles.emptyCopy}>{copy}</Text>
+    </View>
+  </Card>;
+}
+
+const createStyles = (palette: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.bg },
-  page: { padding: 20, paddingBottom: 40, gap: 16, width: '100%', maxWidth: 900, alignSelf: 'center' },
-  directionCard: { gap: 13, borderColor: '#426115', backgroundColor: '#111A13', overflow: 'hidden' },
-  directionGlow: { position: 'absolute', width: 220, height: 220, borderRadius: 110, backgroundColor: palette.accent, opacity: 0.06, top: -130, right: -90 },
-  targetRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  directionLabel: { color: palette.muted, fontSize: 9, fontWeight: '900', letterSpacing: 1.2 },
-  targetValue: { color: palette.accent, fontSize: 34, fontWeight: '900', marginTop: 2 },
-  directionCopy: { color: palette.muted, fontSize: 11, lineHeight: 17 },
-  phaseRow: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', borderTopWidth: 1, borderTopColor: palette.border, paddingTop: 11 },
-  phaseTitle: { color: palette.text, fontSize: 12, fontWeight: '900', textTransform: 'capitalize', marginBottom: 3 },
-  cardEyebrow: { color: palette.accent, fontWeight: '900', letterSpacing: 1.4, fontSize: 10 },
-  weekCard: { gap: 15, borderColor: '#405020' },
-  weekHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  completionLine: { flexDirection: 'row', alignItems: 'baseline', marginTop: 2 },
-  heroValue: { color: palette.text, fontSize: 43, lineHeight: 49, fontWeight: '900' },
-  heroDivider: { color: palette.muted, fontSize: 23, fontWeight: '900' },
-  heroText: { color: palette.muted, fontSize: 12 },
-  percentBadge: { width: 70, height: 70, borderRadius: 23, backgroundColor: palette.accentDark, alignItems: 'center', justifyContent: 'center' },
-  percentValue: { color: palette.accent, fontSize: 19, fontWeight: '900' },
-  percentLabel: { color: palette.muted, fontSize: 9, marginTop: 2 },
-  progressTrack: { height: 7, borderRadius: 4, backgroundColor: palette.surface2, overflow: 'hidden' },
-  progressFill: { height: 7, borderRadius: 4, backgroundColor: palette.accent },
-  partialCopy: { color: palette.orange, fontSize: 11, fontWeight: '700' },
+  page: { width: '100%', maxWidth: 900, alignSelf: 'center', padding: 20, paddingBottom: 42, gap: 14 },
+  onboardingCard: { alignItems: 'center', gap: 8, paddingVertical: 30 },
+  onboardingIcon: { width: 52, height: 52, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.accentDark },
+  onboardingTitle: { color: palette.text, fontSize: 18, fontWeight: '900', marginTop: 3 },
+  onboardingCopy: { color: palette.muted, fontSize: 13, lineHeight: 19, textAlign: 'center', maxWidth: 330 },
+  sectionHead: { gap: 3, marginTop: 8 },
+  sectionEyebrow: { color: palette.accent, fontSize: 10, lineHeight: 14, fontWeight: '900', letterSpacing: 1.7, textTransform: 'uppercase' },
+  sectionTitle: { color: palette.text, fontSize: 21, lineHeight: 27, fontWeight: '900' },
+  overviewCard: { gap: 14 },
+  metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  summaryMetric: { flexGrow: 1, flexBasis: 130, minHeight: 72, borderRadius: 14, backgroundColor: palette.surface2, padding: 11, justifyContent: 'center' },
+  summaryValue: { color: palette.text, fontSize: 21, lineHeight: 26, fontWeight: '900' },
+  summaryLabel: { color: palette.muted, fontSize: 9, lineHeight: 13, fontWeight: '700', marginTop: 3 },
+  changeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, borderTopWidth: 1, borderTopColor: palette.border, paddingTop: 12 },
+  changeText: { flex: 1, color: palette.text, fontSize: 12, lineHeight: 18, fontWeight: '700' },
+  seriesTabs: { gap: 7, paddingRight: 20 },
+  seriesTab: { minHeight: 40, borderRadius: 12, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, justifyContent: 'center', paddingHorizontal: 13 },
+  seriesTabActive: { borderColor: palette.accent, backgroundColor: palette.accentDark },
+  seriesTabText: { color: palette.muted, fontSize: 11, fontWeight: '800' },
+  seriesTabTextActive: { color: palette.accent },
+  sprintCard: { gap: 14 },
+  chart: { height: 116, flexDirection: 'row', alignItems: 'flex-end', gap: 8, borderBottomWidth: 1, borderBottomColor: palette.border, paddingBottom: 22 },
+  chartPoint: { flex: 1, alignItems: 'center', justifyContent: 'flex-end', height: 92 },
+  chartValue: { color: palette.muted, fontSize: 8, fontWeight: '800', marginBottom: 4 },
+  chartBar: { width: '68%', minWidth: 15, maxWidth: 34, borderTopLeftRadius: 7, borderTopRightRadius: 7 },
+  chartDate: { position: 'absolute', bottom: -17, color: palette.muted, fontSize: 8 },
+  caption: { color: palette.muted, fontSize: 9, lineHeight: 14, textAlign: 'center' },
+  disclosure: { minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderTopWidth: 1, borderTopColor: palette.border, paddingTop: 10 },
+  disclosureText: { color: palette.accent, fontSize: 11, fontWeight: '900' },
+  resultList: { borderTopWidth: 1, borderTopColor: palette.border },
+  resultRow: { minHeight: 54, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderBottomWidth: 1, borderBottomColor: palette.border },
+  resultTime: { color: palette.text, fontSize: 14, fontWeight: '900' },
+  resultDate: { color: palette.muted, fontSize: 9, marginTop: 2 },
+  resultMeta: { flex: 1, alignItems: 'flex-end' },
+  resultConditions: { color: palette.text, fontSize: 10, fontWeight: '800', textAlign: 'right' },
+  resultFeeling: { color: palette.accent, fontSize: 9, marginTop: 3 },
+  periodSelector: { flexDirection: 'row', gap: 7 },
+  periodChip: { minHeight: 39, borderRadius: 12, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, paddingHorizontal: 13, alignItems: 'center', justifyContent: 'center' },
+  periodChipActive: { borderColor: palette.accent, backgroundColor: palette.accentDark },
+  periodText: { color: palette.muted, fontSize: 11, fontWeight: '800' },
+  periodTextActive: { color: palette.accent },
+  trainingCard: { gap: 13 },
+  weekDivider: { height: 1, backgroundColor: palette.border },
   weekDays: { flexDirection: 'row', justifyContent: 'space-between', gap: 4 },
   dayWrap: { flex: 1, minWidth: 0, alignItems: 'center', gap: 5 },
   dayDot: { width: 31, height: 31, borderRadius: 10, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
@@ -234,43 +534,10 @@ const styles = StyleSheet.create({
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   legendDot: { width: 6, height: 6, borderRadius: 3 },
   legendText: { color: palette.muted, fontSize: 8, fontWeight: '800' },
-  planCaption: { color: palette.muted, fontSize: 10, lineHeight: 15, textAlign: 'center' },
-  streakCard: { flexDirection: 'row', alignItems: 'center', gap: 13 },
-  streakIcon: { width: 48, height: 48, borderRadius: 15, backgroundColor: palette.accentDark, alignItems: 'center', justifyContent: 'center' },
-  streakValue: { color: palette.text, fontSize: 26, fontWeight: '900' },
-  streakTitle: { color: palette.text, fontSize: 13, fontWeight: '900' },
-  streakCopy: { color: palette.muted, fontSize: 10, lineHeight: 15, marginTop: 3 },
-  milestoneGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 },
-  milestone: { flex: 1, minWidth: 105, minHeight: 108, borderRadius: 16, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, padding: 13, gap: 7 },
-  milestoneUnlocked: { borderColor: '#426115', backgroundColor: '#151F10' },
-  milestoneText: { color: palette.muted, fontSize: 11, lineHeight: 15, fontWeight: '900' },
-  milestoneState: { color: palette.muted, fontSize: 8, fontWeight: '800', textTransform: 'uppercase', letterSpacing: .6 },
-  sectionHead: { gap: 4, marginTop: 6 },
-  sectionTitle: { color: palette.text, fontSize: 20, fontWeight: '900' },
-  sectionCopy: { color: palette.muted, fontSize: 12, lineHeight: 17 },
-  seriesTabs: { gap: 7, paddingRight: 20 },
-  seriesTab: { minHeight: 38, borderRadius: 11, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, justifyContent: 'center', paddingHorizontal: 12 },
-  seriesTabActive: { borderColor: palette.accent, backgroundColor: palette.accentDark },
-  seriesTabText: { color: palette.muted, fontSize: 11, fontWeight: '800' },
-  seriesTabTextActive: { color: palette.accent },
-  sprintCard: { gap: 15 },
-  sprintMetrics: { flexDirection: 'row', justifyContent: 'space-between' },
-  metricLabel: { color: palette.muted, fontSize: 9, fontWeight: '900', letterSpacing: 1 },
-  metricValue: { color: palette.text, fontSize: 21, fontWeight: '900', marginTop: 3 },
-  metricNote: { color: palette.muted, fontSize: 9, marginTop: 2 },
-  chart: { height: 112, flexDirection: 'row', alignItems: 'flex-end', gap: 8, borderBottomWidth: 1, borderBottomColor: palette.border, paddingBottom: 22 },
-  chartPoint: { flex: 1, alignItems: 'center', justifyContent: 'flex-end', height: 90 },
-  chartValue: { color: palette.muted, fontSize: 8, fontWeight: '800', marginBottom: 4 },
-  chartBar: { width: '68%', minWidth: 15, maxWidth: 34, borderTopLeftRadius: 7, borderTopRightRadius: 7 },
-  chartDate: { position: 'absolute', bottom: -17, color: palette.muted, fontSize: 8 },
-  fasterNote: { color: palette.muted, fontSize: 9, textAlign: 'center' },
-  resultList: { borderTopWidth: 1, borderTopColor: palette.border },
-  resultRow: { minHeight: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderBottomWidth: 1, borderBottomColor: palette.border },
-  resultTime: { color: palette.text, fontSize: 14, fontWeight: '900' },
-  resultDate: { color: palette.muted, fontSize: 9, marginTop: 2 },
-  resultConditions: { color: palette.text, fontSize: 10, fontWeight: '800', textAlign: 'right' },
-  resultFeeling: { color: palette.accent, fontSize: 9, marginTop: 3 },
-  trendsCard: { gap: 0, paddingVertical: 3 },
+  detailNote: { borderRadius: 12, backgroundColor: palette.surface2, padding: 11 },
+  detailCopy: { color: palette.muted, fontSize: 10, lineHeight: 16 },
+  recoveryCard: { gap: 13 },
+  trendsWrap: { borderTopWidth: 1, borderTopColor: palette.border },
   trendRow: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: palette.border, gap: 8 },
   trendHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   trendLabel: { color: palette.text, fontSize: 13, fontWeight: '900' },
@@ -282,18 +549,21 @@ const styles = StyleSheet.create({
   trendBar: { width: '100%', borderTopLeftRadius: 3, borderTopRightRadius: 3 },
   trendAxis: { flexDirection: 'row', justifyContent: 'space-between' },
   axisText: { color: palette.muted, fontSize: 8 },
-  recentCard: { gap: 10 },
-  recentRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 11 },
-  sessionStatus: { width: 40, height: 40, borderRadius: 12, backgroundColor: palette.surface2, alignItems: 'center', justifyContent: 'center' },
-  sessionStatusDone: { backgroundColor: palette.accentDark },
-  sessionStatusText: { color: palette.accent, fontSize: 17, fontWeight: '900' },
-  recentTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 7, flexWrap: 'wrap' },
-  recentTitle: { color: palette.text, fontSize: 15, fontWeight: '900' },
-  manualChip: { color: palette.muted, backgroundColor: palette.surface2, borderRadius: 7, paddingVertical: 3, paddingHorizontal: 5, fontSize: 7, fontWeight: '900', letterSpacing: 0.6 },
-  recentMeta: { color: palette.muted, fontSize: 10, marginTop: 4 },
-  recentCoverage: { color: palette.accent, fontSize: 10, fontWeight: '800', marginTop: 5 },
-  recentSprint: { color: palette.text, fontSize: 10, fontWeight: '800', marginTop: 5 },
-  emptyCard: { alignItems: 'center', gap: 7, paddingVertical: 28 },
-  emptyTitle: { color: palette.text, fontSize: 15, fontWeight: '900' },
-  emptyCopy: { color: palette.muted, fontSize: 12, lineHeight: 18, textAlign: 'center', maxWidth: 290 },
+  milestonesCard: { gap: 16 },
+  milestoneGroup: { gap: 9 },
+  groupLabel: { color: palette.muted, fontSize: 9, fontWeight: '900', letterSpacing: 1.2, textTransform: 'uppercase' },
+  earnedRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  earnedIcon: { width: 34, height: 34, borderRadius: 11, backgroundColor: palette.accentDark, alignItems: 'center', justifyContent: 'center' },
+  earnedTitle: { flex: 1, color: palette.text, fontSize: 12, fontWeight: '800' },
+  nextMilestone: { gap: 7, paddingVertical: 3 },
+  nextHead: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
+  nextTitle: { flex: 1, color: palette.text, fontSize: 12, fontWeight: '800' },
+  nextCount: { color: palette.muted, fontSize: 10, fontWeight: '800' },
+  milestoneTrack: { height: 6, borderRadius: 3, backgroundColor: palette.surface2, overflow: 'hidden' },
+  milestoneFill: { height: 6, borderRadius: 3, backgroundColor: palette.accent },
+  allEarned: { color: palette.text, fontSize: 12, lineHeight: 18, fontWeight: '700' },
+  emptyCard: { minHeight: 94, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  emptyText: { flex: 1, gap: 3 },
+  emptyTitle: { color: palette.text, fontSize: 14, fontWeight: '900' },
+  emptyCopy: { color: palette.muted, fontSize: 11, lineHeight: 17 },
 });

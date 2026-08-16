@@ -32,7 +32,7 @@ export type EventPathway = 'short-sprint-100-200' | 'long-sprint-200-400' | 'sha
 export type EventTag = '60m' | '100m' | '200m' | '400m';
 export type LibraryAthleteLevel = 'foundation' | 'developing' | 'trained' | 'advanced';
 export type LibrarySeasonPhase = 'general-preparation' | 'specific-preparation' | 'pre-competition' | 'competition' | 'taper' | 'transition';
-export type LibrarySurface = 'track' | 'track-curve' | 'turf' | 'level-grass' | 'hill' | 'gym' | 'pool' | 'indoor' | 'home';
+export type LibrarySurface = 'track' | 'track-curve' | 'turf' | 'level-grass' | 'hill' | 'court' | 'gym' | 'pool' | 'indoor' | 'home';
 export type IntensityBasis = 'percent-max-velocity' | 'percent-best-time' | 'rpe' | 'technical';
 export type MetabolicDemand = 'low' | 'moderate' | 'high' | 'very-high';
 

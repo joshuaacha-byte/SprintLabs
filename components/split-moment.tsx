@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Animated, Image, StyleSheet, Text, View } from 'react-native';
 import { splitImages, type SplitPose } from '@/components/onboarding';
-import { palette } from '@/constants/sprintlab';
+import { Palette, useTheme } from '@/constants/sprintlab';
 
 type SplitMomentProps = {
   title: string;
@@ -10,6 +10,8 @@ type SplitMomentProps = {
 };
 
 export function SplitMoment({ title, message, pose = 'listening' }: SplitMomentProps) {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
   const opacity = useRef(new Animated.Value(0)).current;
   const scale = useRef(new Animated.Value(0.94)).current;
 
@@ -26,7 +28,7 @@ export function SplitMoment({ title, message, pose = 'listening' }: SplitMomentP
       style={[styles.wrap, { opacity, transform: [{ scale }] }]}>
       <Image source={splitImages[pose]} style={styles.image} resizeMode="contain" />
       <View style={styles.copy}>
-        <Text style={styles.kicker}>SPLIT</Text>
+        <Text style={styles.kicker}>Split</Text>
         <Text style={styles.title}>{title}</Text>
         <Text style={styles.message}>{message}</Text>
       </View>
@@ -34,7 +36,7 @@ export function SplitMoment({ title, message, pose = 'listening' }: SplitMomentP
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (palette: Palette) => StyleSheet.create({
   wrap: {
     minHeight: 112,
     flexDirection: 'row',

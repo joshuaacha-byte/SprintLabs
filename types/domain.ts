@@ -177,6 +177,23 @@ export type PainArea =
   | 'lower-back'
   | 'other';
 
+export type TrainingConcernArea =
+  | 'hamstring'
+  | 'knee'
+  | 'achilles-or-ankle'
+  | 'back'
+  | 'shoulder'
+  | 'other';
+
+export type TrainingConcernStatus = 'currently-limiting' | 'recently-cleared' | 'monitoring';
+
+export type TimeAwayDuration = 'under-2-weeks' | '2-6-weeks' | '6-12-weeks' | '3-plus-months';
+
+export interface TrainingConcernDetail {
+  area: TrainingConcernArea;
+  status: TrainingConcernStatus;
+}
+
 export type TrainingDay =
   | 'monday'
   | 'tuesday'
@@ -201,7 +218,7 @@ export type ModificationReason =
   | 'time-or-schedule'
   | 'performance'
   | 'other';
-export type WarmupFeeling = 'poor' | 'heavy' | 'average' | 'good' | 'excellent' | 'not-recorded';
+export type WarmupFeeling = 'poor' | 'heavy' | 'average' | 'good' | 'excellent' | 'better' | 'same' | 'worse' | 'not-recorded';
 export type RepCompletionStatus = 'completed' | 'skipped' | 'stopped' | 'not-recorded';
 export type WindType = 'indoor' | 'no-gauge' | 'still' | 'headwind' | 'tailwind' | 'measured' | 'unknown';
 export type WeatherType = 'clear' | 'cloudy' | 'rain' | 'snow' | 'hot' | 'cold' | 'humid' | 'windy' | 'indoor' | 'unknown';
@@ -235,7 +252,23 @@ export type PerformanceTest = {
 };
 
 export type TrackProfile = { primaryEvent: SprintEvent; secondaryEvents: SprintEvent[]; personalBests: PersonalBest[]; blockStartExperience: SkillExperience; nextMeetDate: ISODateString | null; championshipDate: ISODateString | null };
-export type FootballProfile = { position?: string; fortyYardDashTime?: number; tenYardSplit?: number; twentyYardSplit?: number; proAgilityTime?: number; flyingTenTime?: number; verticalJump?: number; broadJump?: number; combineDate?: ISODateString | null };
+export type FootballProfile = {
+  /** Legacy fields remain optional so previously saved profiles still load. */
+  position?: string;
+  /** What the athlete is training speed for; shapes whether 40-yard testing questions appear. */
+  trainingFocus?: 'forty-yard' | 'game-speed' | 'both';
+  baselineStatus?: 'known' | 'untested';
+  fortyYardDashTime?: number;
+  fortyYardTimingMethod?: TimingMethod;
+  targetFortyYardDashTime?: number;
+  tenYardSplit?: number;
+  twentyYardSplit?: number;
+  proAgilityTime?: number;
+  flyingTenTime?: number;
+  verticalJump?: number;
+  broadJump?: number;
+  combineDate?: ISODateString | null;
+};
 export type SoccerProfile = { position?: string; tenMeterTime?: number; twentyMeterTime?: number; thirtyMeterTime?: number; repeatedSprintTest?: string; matchDaysPerWeek?: number };
 export type BasketballProfile = { position?: string; courtSprintTime?: number; threeQuarterCourtSprintTime?: number; laneAgilityTime?: number; verticalJump?: number; approachJump?: number };
 export type BaseballSoftballProfile = { position?: string; homeToFirstTime?: number; tenYardTime?: number; sixtyYardDashTime?: number };
@@ -287,7 +320,11 @@ export type AthleteProfile = {
   seasonPhase: SeasonPhase;
   trainingDaysPerWeek: number;
   availableTrainingDays: TrainingDay[];
+  /** Whether the athlete wants SprintLab restricted to the exact weekdays above. */
+  exactTrainingDaysPreference?: boolean;
   preferredRestDay: TrainingDay;
+  /** Keeps the legacy rest-day value readable without treating it as a new athlete's choice. */
+  preferredRestDayAnswered?: boolean;
   usualSessionDurationMinutes: number;
   trackAccess: AccessLevel;
   grassAccess: AccessLevel;
@@ -318,6 +355,11 @@ export type AthleteProfile = {
   secondaryPerformanceTests?: PerformanceTest[];
   sportPracticeDays?: TrainingDay[];
   gameOrCompetitionDays?: (ISODateString | TrainingDay)[];
+  gameScheduleVaries?: boolean;
+  otherSportDays?: TrainingDay[];
+  busySchoolDays?: TrainingDay[];
+  /** True after the athlete has placed selected outside commitments on the week. */
+  commitmentSchedulePlaced?: boolean;
   currentTeamTrainingLoad?: CurrentTeamTrainingLoad;
   courtAccess?: AccessLevel;
   sledAccess?: AccessLevel;
@@ -331,6 +373,8 @@ export type AthleteProfile = {
   volleyballProfile?: VolleyballProfile;
   generalSpeedProfile?: GeneralSpeedProfile;
   trainingPlanMode?: TrainingPlanMode;
+  /** True only after the athlete explicitly chooses how SprintLab should organize training. */
+  trainingPlanModeAnswered?: boolean;
   otherSportParticipation?: string;
   recentSprintConsistency?: SprintConsistency;
   currentWorkouts?: string;
@@ -345,14 +389,28 @@ export type AthleteProfile = {
   onboardingComplete?: boolean;
   currentTrainingDemands?: TrainingDemand[];
   onboardingLimitations?: string[];
+  /** Structured follow-ups for current physical concerns; these are context, not diagnoses. */
+  trainingConcernDetails?: TrainingConcernDetail[];
+  otherConcernArea?: string;
+  returningAfterTimeOff?: boolean;
+  timeAwayDuration?: TimeAwayDuration;
+  /** Separates the initial selection screen from its relevant follow-up questions. */
+  trainingConstraintsReviewed?: boolean;
+  /** Optional context for a selected hamstring limitation; never treated as a diagnosis. */
+  hamstringLimitationSeverity?: 'cautious' | 'mild-tightness' | 'moderate-discomfort' | 'returning-from-strain';
   /** Local onboarding gates distinguish an intentional answer from a migration default. */
   experienceAnswered?: boolean;
   sportProfileAnswered?: boolean;
+  primarySportAnswered?: boolean;
   turfAccess?: AccessLevel;
   /** Local workout reminders. Time is stored in the athlete's current local timezone. */
   workoutReminderEnabled?: boolean;
   workoutReminderHour?: number;
   workoutReminderMinute?: number;
+  /** Keeps a custom clock choice distinct from a preset that happens to use the same time. */
+  workoutReminderCustomTime?: boolean;
+  /** Distinguishes an unanswered onboarding step from an intentional "no reminders" choice. */
+  workoutReminderAnswered?: boolean;
   /** Optional race-development answers used to rank, never invent, library sessions. */
   raceDevelopmentAreas?: RaceDevelopmentArea[];
   /** Athlete-entered performance targets. These are goals, not guarantees. */

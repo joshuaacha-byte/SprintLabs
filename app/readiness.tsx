@@ -1,68 +1,232 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useCallback, useMemo, useState } from 'react';
-import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Picker } from '@react-native-picker/picker';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Modal,
+  PanResponder,
+  Platform,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { Card, Eyebrow, PrimaryButton, ScreenTitle } from '@/components/sprint-ui';
-import { palette } from '@/constants/sprintlab';
-import { ReadinessDecision, ReadinessLocation, ReadinessSensation } from '@/types';
+import { Card, PrimaryButton } from '@/components/sprint-ui';
+import { Palette, useTheme } from '@/constants/sprintlab';
+import type {
+  ReadinessDecision,
+  ReadinessFuelStatus,
+  ReadinessLocation,
+  ReadinessSensation,
+  TrainingLog,
+  WarmupReassessment,
+} from '@/types';
 import {
   evaluateReadiness,
   locationLabels,
+  ReadinessBaseline,
   readinessLevelMeta,
   sensationLabels,
 } from '@/utils/readiness';
-import { clearPendingWorkoutLaunch, getPendingWorkoutLaunch, getReadiness, saveReadiness, startWorkoutSession } from '@/utils/storage';
+import {
+  clearPendingWorkoutLaunch,
+  getPendingWorkoutLaunch,
+  getReadiness,
+  getTrainingLogs,
+  saveReadiness,
+  startWorkoutSession,
+} from '@/utils/storage';
+import { completeStep, error, selection, success, tap, warning } from '@/utils/haptics';
+
+type CheckInStage = 1 | 2 | 3 | 4;
 
 const dateKey = () => new Date().toLocaleDateString('en-CA');
-const levelColors = { green: palette.accent, yellow: palette.orange, red: palette.red } as const;
-const levelBackgrounds = { green: '#162000', yellow: '#2A1B0C', red: '#2A1216' } as const;
-const cleanSleep = (value: string) => {
-  const normalized = value.replace(/[^0-9.]/g, '');
-  const [whole = '', ...decimals] = normalized.split('.');
-  const decimal = decimals.length ? `.${decimals.join('').slice(0, 1)}` : '';
-  const result = `${whole.slice(0, 2)}${decimal}`;
-  return Number(result) > 24 ? '24' : result;
+const average = (values: number[]) => values.length
+  ? values.reduce((sum, value) => sum + value, 0) / values.length
+  : undefined;
+
+const baselineFromLogs = (logs: TrainingLog[]): ReadinessBaseline => {
+  const recent = [...logs].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 14);
+  const sleep = recent.map(log => log.readiness.sleepHours).filter((value): value is number => value !== null);
+  const neural = recent.flatMap(log => log.readiness.energy === null ? [] : [Number(log.readiness.energy)]);
+  const soreness = recent.flatMap(log => log.readiness.generalSoreness === null ? [] : [Number(log.readiness.generalSoreness)]);
+  return {
+    sampleCount: recent.length,
+    averageSleep: average(sleep),
+    averageNeuralReadiness: average(neural),
+    averageSoreness: average(soreness),
+  };
 };
 
-function Scale({ value, max, onChange }: { value: number; max: number; onChange: (n: number) => void }) {
-  return <View style={styles.scale}>{Array.from({ length: max }, (_, i) => i + 1).map(n => <Pressable key={n} onPress={() => onChange(n)} style={[styles.scaleItem, value === n && styles.scaleActive]}><Text style={[styles.scaleText, value === n && styles.scaleTextActive]}>{n}</Text></Pressable>)}</View>;
+function CompactScale({
+  value,
+  left,
+  right,
+  onChange,
+}: {
+  value: number;
+  left: string;
+  right: string;
+  onChange: (value: number) => void;
+}) {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
+  return (
+    <View>
+      <View style={styles.scale}>
+        {Array.from({ length: 5 }, (_, index) => index + 1).map(number => {
+          const selected = value === number;
+          return (
+            <Pressable
+              key={number}
+              accessibilityRole="radio"
+              accessibilityState={{ selected }}
+              accessibilityLabel={`${number} out of 5`}
+              onPress={() => {
+                if (value !== number) selection();
+                onChange(number);
+              }}
+              style={[styles.scaleItem, selected && styles.scaleActive]}>
+              <Text style={[styles.scaleText, selected && styles.scaleTextActive]}>{number}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <View style={styles.scaleEndpoints}>
+        <Text style={styles.endpoint}>{left}</Text>
+        <Text style={styles.endpoint}>{right}</Text>
+      </View>
+    </View>
+  );
 }
 
-function Choice<T extends string | boolean>({ value, options, onChange }: { value: T | null | undefined; options: { value: T; label: string; detail?: string }[]; onChange: (value: T) => void }) {
-  return <View style={styles.choiceList}>{options.map(option => {
-    const selected = value === option.value;
-    return <Pressable key={String(option.value)} onPress={() => onChange(option.value)} style={[styles.choice, selected && styles.choiceSelected]}>
-      <View style={[styles.choiceDot, selected && styles.choiceDotSelected]} />
-      <View style={{ flex: 1 }}><Text style={[styles.choiceLabel, selected && styles.choiceLabelSelected]}>{option.label}</Text>{option.detail ? <Text style={styles.choiceDetail}>{option.detail}</Text> : null}</View>
-    </Pressable>;
-  })}</View>;
+function Choice<T extends string | boolean>({
+  value,
+  options,
+  onChange,
+  compact = false,
+  dense = false,
+  feedback,
+}: {
+  value: T | null | undefined;
+  options: { value: T; label: string; detail?: string }[];
+  onChange: (value: T) => void;
+  compact?: boolean;
+  dense?: boolean;
+  feedback?: (value: T) => void;
+}) {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
+  return (
+    <View style={[styles.choiceList, compact && styles.choiceListHorizontal]}>
+      {options.map(option => {
+        const selected = value === option.value;
+        return (
+          <Pressable
+            key={String(option.value)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected }}
+            onPress={() => {
+              if (!selected) {
+                if (feedback) feedback(option.value);
+                else selection();
+              }
+              onChange(option.value);
+            }}
+            style={[styles.choice, dense && styles.choiceDense, compact && styles.choiceCompact, selected && styles.choiceSelected]}>
+            <View style={[styles.choiceDot, selected && styles.choiceDotSelected]}>
+              {selected ? <View style={styles.choiceDotCenter} /> : null}
+            </View>
+            <View style={styles.choiceContent}>
+              <Text style={[styles.choiceLabel, selected && styles.choiceLabelSelected]}>{option.label}</Text>
+              {option.detail ? <Text style={styles.choiceDetail}>{option.detail}</Text> : null}
+            </View>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function StageProgress({ stage }: { stage: CheckInStage }) {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
+  const items = [
+    { number: 1, label: 'Recovery' },
+    { number: 2, label: 'Fuel' },
+    { number: 3, label: 'Body' },
+  ];
+  return (
+    <View style={styles.progressWrap}>
+      {items.map((item, index) => {
+        const active = stage === item.number;
+        const complete = stage > item.number;
+        return (
+          <View key={item.number} style={styles.progressItem}>
+            <View style={[styles.progressDot, (active || complete) && styles.progressDotActive]}>
+              {complete
+                ? <MaterialIcons name="check" size={13} color="#081000" />
+                : <Text style={[styles.progressNumber, active && styles.progressNumberActive]}>{item.number}</Text>}
+            </View>
+            <Text style={[styles.progressLabel, (active || complete) && styles.progressLabelActive]}>{item.label}</Text>
+            {index < items.length - 1 ? <View style={[styles.progressLine, complete && styles.progressLineActive]} /> : null}
+          </View>
+        );
+      })}
+    </View>
+  );
 }
 
 export default function ReadinessScreen() {
   const router = useRouter();
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
   const { launch } = useLocalSearchParams<{ launch?: string }>();
-  const [sleep, setSleep] = useState('');
+  const [stage, setStage] = useState<CheckInStage>(1);
+  const [sleepHours, setSleepHours] = useState(-1);
+  const [sleepMinutes, setSleepMinutes] = useState(0);
+  const [sleepPickerOpen, setSleepPickerOpen] = useState(false);
+  const [unusualSleepConfirmed, setUnusualSleepConfirmed] = useState(false);
   const [sleepQuality, setSleepQuality] = useState(0);
-  const [neuralReadiness, setNeuralReadiness] = useState(0);
+  const [legReadiness, setLegReadiness] = useState(0);
   const [focus, setFocus] = useState(0);
-  const [fuelHydrated, setFuelHydrated] = useState<boolean | null>(null);
+  const [foodStatus, setFoodStatus] = useState<ReadinessFuelStatus>();
+  const [hydrated, setHydrated] = useState<boolean | null>(null);
   const [soreness, setSoreness] = useState(0);
   const [hasLocalizedIssue, setHasLocalizedIssue] = useState<boolean | null>(null);
+  const [symptomSheetOpen, setSymptomSheetOpen] = useState(false);
   const [sensation, setSensation] = useState<ReadinessSensation>();
   const [location, setLocation] = useState<ReadinessLocation>();
   const [otherLocationDetail, setOtherLocationDetail] = useState('');
   const [hesitatesAtMaxEffort, setHesitatesAtMaxEffort] = useState<boolean | null>(null);
   const [painNotes, setPainNotes] = useState('');
-  const [confirmSkip, setConfirmSkip] = useState(false);
+  const [warmupReassessment, setWarmupReassessment] = useState<WarmupReassessment>();
+  const [baseline, setBaseline] = useState<ReadinessBaseline>({ sampleCount: 0 });
+  const symptomScrollRef = useRef<ScrollView>(null);
+  const symptomFieldOffsets = useRef<Record<'location' | 'sensation' | 'movement', number>>({
+    location: 0,
+    sensation: 0,
+    movement: 0,
+  });
 
   useFocusEffect(useCallback(() => {
-    getReadiness(dateKey()).then(value => {
+    Promise.all([getReadiness(dateKey()), getTrainingLogs()]).then(([value, logs]) => {
+      setBaseline(baselineFromLogs(logs));
       if (value?.status !== 'completed') return;
-      setSleep(value.sleep ? String(value.sleep) : '');
+      if (typeof value.sleep === 'number') {
+        setSleepHours(Math.floor(value.sleep));
+        setSleepMinutes(Math.round((value.sleep % 1) * 60 / 15) * 15);
+      }
       setSleepQuality(value.sleepQuality ?? 0);
-      setNeuralReadiness(value.neuralReadiness ?? (value.energy ? value.energy * 2 : 0));
+      setLegReadiness(Math.max(1, Math.min(5, Math.round((value.neuralReadiness ?? (value.energy ? value.energy * 2 : 0)) / 2))));
       setFocus(value.focus ?? 0);
-      setFuelHydrated(value.fuelHydrated ?? null);
+      setFoodStatus(value.foodStatus ?? (value.fuelHydrated === false ? 'underfueled' : value.fuelHydrated === true ? 'normal' : undefined));
+      setHydrated(value.hydrated ?? value.fuelHydrated ?? null);
       setSoreness(value.soreness ?? 0);
       setHasLocalizedIssue(value.hasLocalizedIssue ?? null);
       setSensation(value.sensation);
@@ -70,13 +234,27 @@ export default function ReadinessScreen() {
       setOtherLocationDetail(value.otherLocationDetail ?? '');
       setHesitatesAtMaxEffort(value.hesitatesAtMaxEffort ?? null);
       setPainNotes(value.painNotes);
+      setWarmupReassessment(value.warmupReassessment);
+      setUnusualSleepConfirmed(typeof value.sleep === 'number' && (value.sleep < 4 || value.sleep > 12));
     });
   }, []));
 
-  const sleepNumber = Number(sleep);
+  const sleepNumber = sleepHours >= 0 ? sleepHours + sleepMinutes / 60 : -1;
+  const unusualSleep = sleepNumber >= 0 && (sleepNumber < 4 || sleepNumber > 12);
+  const sleepLabel = sleepHours < 0
+    ? 'Select'
+    : `${sleepHours} hr${sleepHours === 1 ? '' : 's'}${sleepMinutes ? ` ${sleepMinutes} min` : ''}`;
   const locationComplete = Boolean(location) && (location !== 'other' || Boolean(otherLocationDetail.trim()));
-  const branchComplete = hasLocalizedIssue === false || (hasLocalizedIssue === true && Boolean(sensation) && locationComplete && hesitatesAtMaxEffort !== null);
-  const valid = sleepNumber > 0 && sleepNumber <= 24 && sleepQuality > 0 && neuralReadiness > 0 && focus > 0 && fuelHydrated !== null && soreness > 0 && hasLocalizedIssue !== null && branchComplete;
+  const symptomComplete = hasLocalizedIssue === false
+    || (hasLocalizedIssue === true && Boolean(sensation) && locationComplete && hesitatesAtMaxEffort !== null);
+  const recoveryComplete = sleepNumber >= 0 && sleepNumber <= 14
+    && (!unusualSleep || unusualSleepConfirmed)
+    && sleepQuality > 0
+    && legReadiness > 0;
+  const fuelComplete = focus > 0 && Boolean(foodStatus) && hydrated !== null;
+  const bodyComplete = soreness > 0 && hasLocalizedIssue !== null && symptomComplete;
+  const valid = recoveryComplete && fuelComplete && bodyComplete;
+  const neuralReadiness = legReadiness * 2;
 
   const draft = useMemo<ReadinessDecision | null>(() => valid ? {
     date: dateKey(),
@@ -85,19 +263,46 @@ export default function ReadinessScreen() {
     sleepQuality,
     neuralReadiness,
     focus,
-    fuelHydrated: fuelHydrated ?? undefined,
+    foodStatus,
+    hydrated: hydrated ?? undefined,
+    fuelHydrated: foodStatus !== 'underfueled' && hydrated === true,
     soreness,
     hasLocalizedIssue: hasLocalizedIssue ?? undefined,
     sensation: hasLocalizedIssue ? sensation : undefined,
     location: hasLocalizedIssue ? location : undefined,
     otherLocationDetail: hasLocalizedIssue && location === 'other' ? otherLocationDetail.trim() : undefined,
     hesitatesAtMaxEffort: hasLocalizedIssue ? (hesitatesAtMaxEffort ?? undefined) : undefined,
+    warmupReassessment,
     painNotes: hasLocalizedIssue ? painNotes : '',
-  } : null, [valid, sleepNumber, sleepQuality, neuralReadiness, focus, fuelHydrated, soreness, hasLocalizedIssue, sensation, location, otherLocationDetail, hesitatesAtMaxEffort, painNotes]);
+  } : null, [
+    valid,
+    sleepNumber,
+    sleepQuality,
+    neuralReadiness,
+    focus,
+    foodStatus,
+    hydrated,
+    soreness,
+    hasLocalizedIssue,
+    sensation,
+    location,
+    otherLocationDetail,
+    hesitatesAtMaxEffort,
+    warmupReassessment,
+    painNotes,
+  ]);
 
-  const evaluation = useMemo(() => draft ? evaluateReadiness(draft) : null, [draft]);
+  const evaluation = useMemo(() => draft ? evaluateReadiness(draft, baseline) : null, [draft, baseline]);
+
   const finishCheckIn = async (decision: ReadinessDecision) => {
-    await saveReadiness(decision);
+    try {
+      await saveReadiness(decision);
+    } catch {
+      error();
+      Alert.alert('Could not save readiness', 'Please try again.');
+      return;
+    }
+    success();
     if (launch !== 'pending') return router.back();
     const pending = await getPendingWorkoutLaunch();
     if (!pending) return router.replace('/');
@@ -111,6 +316,7 @@ export default function ReadinessScreen() {
     await clearPendingWorkoutLaunch();
     router.replace('/workout');
   };
+
   const save = async () => {
     if (!draft || !evaluation) return;
     await finishCheckIn({
@@ -118,110 +324,628 @@ export default function ReadinessScreen() {
       readinessLevel: evaluation.level,
       readinessReasons: evaluation.reasons,
       readinessGuidance: evaluation.guidance,
+      maximalSprintRestricted: evaluation.maximalSprintRestricted,
     });
   };
-  const skip = async () => {
-    await finishCheckIn({ date: dateKey(), status: 'skipped', painNotes: '' });
+
+  const saveAndReturnToToday = async () => {
+    if (!draft || !evaluation) return;
+    try {
+      await saveReadiness({
+        ...draft,
+        readinessLevel: evaluation.level,
+        readinessReasons: evaluation.reasons,
+        readinessGuidance: evaluation.guidance,
+        maximalSprintRestricted: evaluation.maximalSprintRestricted,
+      });
+      if (launch === 'pending') await clearPendingWorkoutLaunch();
+      success();
+      router.replace('/');
+    } catch {
+      error();
+      Alert.alert('Could not save check-in', 'Your answers are still here. Please try again.');
+    }
   };
 
-  return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
-    <Pressable onPress={() => router.back()} style={styles.back}><MaterialIcons name="arrow-back" size={22} color={palette.text} /></Pressable>
-    <Eyebrow>Before training</Eyebrow>
-    <ScreenTitle subtitle="A quick sprint-specific check for recovery and warning signs—not a diagnosis or medical clearance.">Readiness check-in</ScreenTitle>
+  const skip = () => {
+    Alert.alert(
+      'Skip today’s check-in?',
+      'You can begin without recording readiness details.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Skip check-in',
+          style: 'destructive',
+          onPress: () => {
+            warning();
+            finishCheckIn({ date: dateKey(), status: 'skipped', painNotes: '' });
+          },
+        },
+      ],
+    );
+  };
 
-    <View style={styles.partHead}><Text style={styles.partNumber}>1</Text><View><Text style={styles.partTitle}>Recovery baseline</Text><Text style={styles.partCopy}>Sleep, explosive energy, focus, and fuel.</Text></View></View>
-    <Card style={styles.formCard}>
-      <View><Text style={styles.label}>Sleep duration</Text><Text style={styles.hint}>How many hours did you sleep last night? Enter 0–24; halves such as 7.5 are okay.</Text><TextInput value={sleep} onChangeText={value => setSleep(cleanSleep(value))} keyboardType="decimal-pad" placeholder="Hours, e.g. 7.5" placeholderTextColor="#647382" style={[styles.input, { marginTop: 10 }]} /></View>
-      <View style={styles.field}><Text style={styles.label}>Sleep quality · {sleepQuality ? `${sleepQuality}/5` : 'not answered'}</Text><Text style={styles.hint}>1 = tossed and turned · 5 = deep sleep</Text><Scale value={sleepQuality} max={5} onChange={setSleepQuality} /></View>
-      <View style={styles.field}><Text style={styles.label}>Explosive readiness · {neuralReadiness ? `${neuralReadiness}/10` : 'not answered'}</Text><Text style={styles.hint}>How snappy and powerful do your legs feel? 1 = heavy / dead legs · 10 = explosive / fully charged.</Text><Scale value={neuralReadiness} max={10} onChange={setNeuralReadiness} /></View>
-      <View style={styles.field}><Text style={styles.label}>Mental focus · {focus ? `${focus}/5` : 'not answered'}</Text><Text style={styles.hint}>1 = distracted · 5 = fully locked in</Text><Scale value={focus} max={5} onChange={setFocus} /></View>
-      <View style={styles.field}><Text style={styles.label}>Fuel and hydration</Text><Text style={styles.hint}>Have you eaten and had enough water today?</Text><Choice value={fuelHydrated} onChange={setFuelHydrated} options={[{ value: true, label: 'Yes' }, { value: false, label: 'No' }]} /></View>
-    </Card>
+  const clearLocalizedIssue = () => {
+    setSensation(undefined);
+    setLocation(undefined);
+    setOtherLocationDetail('');
+    setHesitatesAtMaxEffort(null);
+    setPainNotes('');
+    setWarmupReassessment(undefined);
+  };
 
-    <View style={styles.partHead}><Text style={styles.partNumber}>2</Text><View><Text style={styles.partTitle}>Body status</Text><Text style={styles.partCopy}>Review soreness, tightness, and localized pain.</Text></View></View>
-    <Card style={styles.formCard}>
-      <View><Text style={styles.label}>General training soreness · {soreness ? `${soreness}/5` : 'not answered'}</Text><Text style={styles.hint}>1 = none · 5 = severe</Text><Scale value={soreness} max={5} onChange={setSoreness} /></View>
-      <View style={styles.field}><Text style={styles.label}>Localized tightness, pulling, or pain?</Text><Text style={styles.hint}>Hamstring, calf, shin, hip, foot, or another specific area.</Text><Choice value={hasLocalizedIssue} onChange={value => { setHasLocalizedIssue(value); if (!value) { setSensation(undefined); setLocation(undefined); setOtherLocationDetail(''); setHesitatesAtMaxEffort(null); setPainNotes(''); } }} options={[{ value: false, label: 'No' }, { value: true, label: 'Yes' }]} /></View>
-    </Card>
+  const dismissSymptomSheet = () => {
+    tap();
+    setSymptomSheetOpen(false);
+  };
+  const saveSymptomSheet = () => {
+    const missing = !locationComplete
+      ? { field: 'location' as const, label: location === 'other' ? 'Add the specific body area.' : 'Choose the body area.' }
+      : !sensation
+        ? { field: 'sensation' as const, label: 'Choose how you would describe it.' }
+        : hesitatesAtMaxEffort === null
+          ? { field: 'movement' as const, label: 'Choose whether it affects normal movement.' }
+          : null;
+    if (missing) {
+      error();
+      Alert.alert('One detail is missing', missing.label);
+      symptomScrollRef.current?.scrollTo({
+        y: Math.max(0, symptomFieldOffsets.current[missing.field] - 12),
+        animated: true,
+      });
+      return;
+    }
+    warning();
+    setSymptomSheetOpen(false);
+  };
+  const symptomSheetPanResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gesture) => gesture.dy > 8 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+    onPanResponderRelease: (_, gesture) => {
+      if (gesture.dy > 55 || gesture.vy > 0.8) setSymptomSheetOpen(false);
+    },
+  }), []);
 
-    {hasLocalizedIssue ? <Card style={styles.branchCard}>
-      <Eyebrow>Required follow-up</Eyebrow>
-      <View style={styles.field}><Text style={styles.label}>How would you describe it?</Text><Choice value={sensation} onChange={setSensation} options={[
-        { value: 'minor-tightness', label: sensationLabels['minor-tightness'], detail: 'Tight or stiff and may ease during warm-up.' },
-        { value: 'lingering-niggle', label: sensationLabels['lingering-niggle'], detail: 'Persistent pulling that is noticeable when accelerating.' },
-        { value: 'severe-acute', label: sensationLabels['severe-acute'], detail: 'Sharp pain, pain walking, or pain pushing off.' },
-      ]} /></View>
-      <View style={styles.field}><Text style={styles.label}>Where is it?</Text><Choice value={location} onChange={value => { setLocation(value); if (value !== 'other') setOtherLocationDetail(''); }} options={(Object.entries(locationLabels) as [ReadinessLocation, string][]).map(([value, label]) => ({ value, label }))} /></View>
-      {location === 'other' ? <View style={styles.field}><Text style={styles.label}>Specific area · required</Text><Text style={styles.hint}>Name the exact area so the entry is useful later.</Text><TextInput value={otherLocationDetail} onChangeText={setOtherLocationDetail} placeholder="Example: left adductor near the groin" placeholderTextColor="#647382" style={[styles.input, { marginTop: 10 }]} /></View> : null}
-      <View style={styles.field}><Text style={styles.label}>Would you hesitate at 100% speed?</Text><Text style={styles.hint}>Would this make you hold back or change how you sprint?</Text><Choice value={hesitatesAtMaxEffort} onChange={setHesitatesAtMaxEffort} options={[{ value: false, label: 'No' }, { value: true, label: 'Yes' }]} /></View>
-      <View style={styles.field}><Text style={styles.label}>Optional note</Text><TextInput value={painNotes} onChangeText={setPainNotes} multiline placeholder="Side, exact spot, when you notice it…" placeholderTextColor="#647382" style={[styles.input, styles.notes]} /></View>
-    </Card> : null}
+  const moveForward = () => {
+    if (stage === 1 && recoveryComplete) {
+      completeStep();
+      setStage(2);
+    } else if (stage === 2 && fuelComplete) {
+      completeStep();
+      setStage(3);
+    } else if (stage === 3 && bodyComplete) {
+      if (evaluation?.level === 'yellow' || evaluation?.level === 'red') warning();
+      else completeStep();
+      setStage(4);
+    } else {
+      error();
+    }
+  };
 
-    <View style={styles.partHead}><Text style={styles.partNumber}>3</Text><View><Text style={styles.partTitle}>Today’s decision</Text><Text style={styles.partCopy}>Complete every required answer to reveal it.</Text></View></View>
-    {evaluation ? <Card style={{ ...styles.resultCard, borderColor: levelColors[evaluation.level], backgroundColor: levelBackgrounds[evaluation.level] }}>
-      <View style={styles.resultHead}><View style={[styles.signal, { backgroundColor: levelColors[evaluation.level] }]} /><View style={{ flex: 1 }}><Text style={[styles.resultLevel, { color: levelColors[evaluation.level] }]}>{evaluation.label}</Text><Text style={styles.resultTitle}>{readinessLevelMeta[evaluation.level].shortLabel}</Text></View></View>
-      <View style={styles.reasonList}>{evaluation.reasons.map(reason => <View key={reason} style={styles.reasonRow}><Text style={[styles.reasonDot, { color: levelColors[evaluation.level] }]}>•</Text><Text style={styles.reasonText}>{reason}</Text></View>)}</View>
-      <Text style={styles.guidance}>{evaluation.guidance}</Text>
-    </Card> : <Card style={styles.resultEmpty}><MaterialIcons name="fact-check" size={24} color={palette.muted} /><Text style={styles.resultEmptyText}>Your readiness signal and exact reasons will appear here.</Text></Card>}
+  const resultColor = evaluation?.level === 'green'
+    ? palette.accent
+    : evaluation?.level === 'yellow'
+      ? palette.orange
+      : palette.red;
+  const resultBackground = evaluation?.level === 'green'
+    ? '#162000'
+    : evaluation?.level === 'yellow'
+      ? '#2A1B0C'
+      : '#2A1216';
 
-    <PrimaryButton title={evaluation ? `Save ${evaluation.label.toLowerCase()} result` : 'Complete the check-in above'} onPress={save} disabled={!evaluation} />
-    <Text style={styles.disclaimer}>This tool flags answers for discussion. It cannot diagnose an injury or guarantee that sprinting is safe.</Text>
+  return (
+    <SafeAreaView style={styles.safe}>
+      <View style={styles.shell}>
+        <View style={styles.header}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={stage === 1 ? 'Close readiness check-in' : 'Go to previous step'}
+            onPress={() => {
+              tap();
+              if (stage === 1) router.back();
+              else setStage(previous => Math.max(1, previous - 1) as CheckInStage);
+            }}
+            style={styles.back}>
+            <MaterialIcons name={stage === 1 ? 'close' : 'arrow-back'} size={22} color={palette.text} />
+          </Pressable>
+          <View style={styles.headerCopy}>
+            <Text style={styles.eyebrow}>BEFORE TRAINING</Text>
+            <Text style={styles.headerTitle}>Readiness check-in</Text>
+          </View>
+          <Pressable accessibilityRole="button" onPress={() => { tap(); skip(); }} style={styles.skipTop}>
+            <Text style={styles.skipTopText}>Skip</Text>
+          </Pressable>
+        </View>
 
-    <View style={styles.skipWrap}><Text style={styles.skipHint}>Complete this check-in before training, or skip it for today.</Text>{confirmSkip ? <Card style={styles.skipConfirm}><Text style={styles.skipConfirmTitle}>Skip today’s check-in?</Text><Text style={styles.skipConfirmCopy}>You can begin the session without recording readiness details.</Text><View style={styles.skipActions}><Pressable onPress={() => setConfirmSkip(false)} style={styles.keepButton}><Text style={styles.keepText}>Go back</Text></Pressable><Pressable onPress={skip} style={styles.confirmButton}><Text style={styles.confirmText}>Yes, skip today</Text></Pressable></View></Card> : <Pressable onPress={() => setConfirmSkip(true)} style={styles.skipButton}><Text style={styles.skipText}>Skip check-in for today</Text></Pressable>}</View>
-  </ScrollView></SafeAreaView>;
+        {stage < 4 ? <StageProgress stage={stage} /> : null}
+
+        <ScrollView
+          contentContainerStyle={styles.page}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}>
+          {stage === 1 ? (
+            <View style={styles.stage}>
+              <View>
+                <Text style={styles.stageTitle}>Recovery</Text>
+                <Text style={styles.stageCopy}>A quick check of sleep and how ready your legs feel.</Text>
+              </View>
+
+              <View style={styles.questionGroup}>
+                <Text style={styles.questionLabel}>Sleep duration</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Sleep duration, ${sleepLabel}`}
+                  onPress={() => { tap(); setSleepPickerOpen(true); }}
+                  style={styles.valueRow}>
+                  <View style={styles.valueIcon}><MaterialIcons name="bedtime" size={20} color={palette.accent} /></View>
+                  <Text style={styles.valueRowLabel}>Sleep duration</Text>
+                  <Text style={[styles.valueRowValue, sleepHours < 0 && styles.valuePlaceholder]}>{sleepLabel}</Text>
+                  <MaterialIcons name="chevron-right" size={22} color={palette.muted} />
+                </Pressable>
+                {unusualSleep ? (
+                  <Pressable
+                    onPress={() => { selection(); setUnusualSleepConfirmed(value => !value); }}
+                    style={[styles.unusualRow, unusualSleepConfirmed && styles.unusualRowConfirmed]}>
+                    <MaterialIcons
+                      name={unusualSleepConfirmed ? 'check-circle' : 'error-outline'}
+                      size={19}
+                      color={unusualSleepConfirmed ? palette.accent : palette.orange}
+                    />
+                    <Text style={styles.unusualText}>
+                      {unusualSleepConfirmed ? `${sleepLabel} confirmed` : `${sleepLabel} is unusual. Tap to confirm it is correct.`}
+                    </Text>
+                  </Pressable>
+                ) : null}
+                {baseline.sampleCount >= 3 && baseline.averageSleep !== undefined ? (
+                  <Text style={styles.baselineText}>Recent average: {baseline.averageSleep.toFixed(1)} hours</Text>
+                ) : null}
+              </View>
+
+              <View style={styles.questionGroup}>
+                <Text style={styles.questionLabel}>Sleep quality</Text>
+                <CompactScale value={sleepQuality} left="Poor" right="Great" onChange={setSleepQuality} />
+              </View>
+
+              <View style={styles.questionGroup}>
+                <Text style={styles.questionLabel}>How ready do your legs feel?</Text>
+                <CompactScale value={legReadiness} left="Heavy" right="Springy" onChange={setLegReadiness} />
+              </View>
+            </View>
+          ) : null}
+
+          {stage === 2 ? (
+            <View style={styles.stage}>
+              <View>
+                <Text style={styles.stageTitle}>Fuel and focus</Text>
+                <Text style={styles.stageCopy}>Compare today with what is normal for you at this time of day.</Text>
+              </View>
+
+              <View style={styles.questionGroup}>
+                <Text style={styles.questionLabel}>Mental focus</Text>
+                <CompactScale value={focus} left="Distracted" right="Locked in" onChange={setFocus} />
+              </View>
+
+              <View style={styles.questionGroup}>
+                <Text style={styles.questionLabel}>Food today</Text>
+                <Choice
+                  value={foodStatus}
+                  onChange={setFoodStatus}
+                  options={[
+                    { value: 'normal', label: 'Eating normally' },
+                    { value: 'fasted-usual', label: 'Training fasted as usual' },
+                    { value: 'underfueled', label: 'Less food than normal' },
+                  ]}
+                />
+              </View>
+
+              <View style={styles.questionGroup}>
+                <Text style={styles.questionLabel}>Hydration</Text>
+                <Choice
+                  compact
+                  value={hydrated}
+                  onChange={setHydrated}
+                  options={[
+                    { value: true, label: 'About normal' },
+                    { value: false, label: 'Less than normal' },
+                  ]}
+                />
+              </View>
+            </View>
+          ) : null}
+
+          {stage === 3 ? (
+            <View style={styles.stage}>
+              <View>
+                <Text style={styles.stageTitle}>Body status</Text>
+                <Text style={styles.stageCopy}>Record general soreness and anything localized before training.</Text>
+              </View>
+
+              <View style={styles.questionGroup}>
+                <Text style={styles.questionLabel}>General training soreness</Text>
+                <CompactScale value={soreness} left="None" right="Severe" onChange={setSoreness} />
+              </View>
+
+              <View style={styles.questionGroup}>
+                <Text style={styles.questionLabel}>Any localized tightness, pulling, or pain?</Text>
+                <Choice
+                  compact
+                  value={hasLocalizedIssue}
+                  feedback={value => value ? warning() : selection()}
+                  onChange={value => {
+                    setHasLocalizedIssue(value);
+                    if (value) setSymptomSheetOpen(true);
+                    else clearLocalizedIssue();
+                  }}
+                  options={[
+                    { value: false, label: 'No' },
+                    { value: true, label: 'Yes' },
+                  ]}
+                />
+                {hasLocalizedIssue && symptomComplete ? (
+                  <Pressable onPress={() => { tap(); setSymptomSheetOpen(true); }} style={styles.symptomSummary}>
+                    <MaterialIcons name="check-circle" size={19} color={palette.orange} />
+                    <View style={styles.symptomSummaryCopy}>
+                      <Text style={styles.symptomSummaryTitle}>Symptom details recorded</Text>
+                      <Text style={styles.symptomSummaryText}>
+                        {location === 'other' ? otherLocationDetail : location ? locationLabels[location] : ''}
+                        {' · '}
+                        {sensation ? sensationLabels[sensation] : ''}
+                      </Text>
+                    </View>
+                    <Text style={styles.editText}>Edit</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+          ) : null}
+
+          {stage === 4 && evaluation ? (
+            <View style={styles.stage}>
+              <View>
+                <Text style={styles.stageTitle}>Today’s readiness</Text>
+                <Text style={styles.stageCopy}>Use this signal with your warm-up, judgment, and qualified support when needed.</Text>
+              </View>
+
+              <Card style={{ ...styles.resultCard, borderColor: resultColor, backgroundColor: resultBackground }}>
+                <View style={styles.resultHead}>
+                  <View style={[styles.signal, { backgroundColor: resultColor }]} />
+                  <View style={styles.resultHeading}>
+                    <Text style={[styles.resultLevel, { color: resultColor }]}>{evaluation.label}</Text>
+                    <Text style={styles.resultTitle}>{readinessLevelMeta[evaluation.level].shortLabel}</Text>
+                  </View>
+                </View>
+                <Text style={styles.guidance}>{evaluation.guidance}</Text>
+                <View style={styles.reasonList}>
+                  {evaluation.reasons.slice(0, 3).map(reason => (
+                    <View key={reason} style={styles.reasonRow}>
+                      <MaterialIcons name="circle" size={7} color={resultColor} style={styles.reasonIcon} />
+                      <Text style={styles.reasonText}>{reason}</Text>
+                    </View>
+                  ))}
+                </View>
+              </Card>
+
+              {evaluation.requiresWarmupReassessment ? (
+                <Card style={styles.reassessment}>
+                  <Text style={styles.questionLabel}>Recheck after your normal warm-up</Text>
+                  <Text style={styles.reassessmentCopy}>How did the flagged issue or overall readiness change?</Text>
+                  <Choice
+                    compact
+                    value={warmupReassessment}
+                    feedback={value => value === 'worse' ? warning() : selection()}
+                    onChange={setWarmupReassessment}
+                    options={[
+                      { value: 'better', label: 'Better' },
+                      { value: 'same', label: 'Same' },
+                      { value: 'worse', label: 'Worse' },
+                    ]}
+                  />
+                </Card>
+              ) : null}
+
+              <View style={styles.safetyNote}>
+                <MaterialIcons name="health-and-safety" size={19} color={palette.muted} />
+                <Text style={styles.safetyText}>SprintLab can flag concerns, but it cannot diagnose an injury or confirm that training is safe.</Text>
+              </View>
+
+              <Pressable onPress={() => { tap(); setStage(1); }} style={styles.editAnswers}>
+                <MaterialIcons name="edit" size={17} color={palette.muted} />
+                <Text style={styles.editAnswersText}>Edit answers</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </ScrollView>
+
+        <View style={styles.bottomBar}>
+          {stage < 4 ? (
+            <PrimaryButton
+              title={
+                stage === 1
+                  ? 'Continue to fuel'
+                  : stage === 2
+                    ? 'Continue to body status'
+                    : bodyComplete
+                      ? 'Review today’s readiness'
+                      : 'Complete body status'
+              }
+              onPress={moveForward}
+              disabled={
+                (stage === 1 && !recoveryComplete)
+                || (stage === 2 && !fuelComplete)
+                || (stage === 3 && !bodyComplete)
+              }
+            />
+          ) : (
+            <PrimaryButton
+              title={
+                evaluation?.level === 'red'
+                  ? 'Return to Today'
+                  : evaluation?.requiresWarmupReassessment && !warmupReassessment
+                    ? 'Reassess after warm-up'
+                    : launch === 'pending'
+                      ? 'Continue to today’s workout'
+                      : 'Save readiness'
+              }
+              onPress={evaluation?.level === 'red' ? saveAndReturnToToday : save}
+              disabled={!evaluation || (evaluation.requiresWarmupReassessment && !warmupReassessment)}
+            />
+          )}
+        </View>
+      </View>
+
+      <Modal visible={sleepPickerOpen} transparent animationType="slide" onRequestClose={() => setSleepPickerOpen(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => { tap(); setSleepPickerOpen(false); }}>
+          <Pressable style={styles.sheet} onPress={event => event.stopPropagation()}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <View>
+                <Text style={styles.sheetTitle}>Sleep duration</Text>
+                <Text style={styles.sheetCopy}>Choose your actual sleep time.</Text>
+              </View>
+              <Pressable
+                onPress={() => {
+                  tap();
+                  if (sleepHours < 0) setSleepHours(8);
+                  setSleepPickerOpen(false);
+                }}
+                style={styles.doneButton}>
+                <Text style={styles.doneText}>Done</Text>
+              </Pressable>
+            </View>
+            <View style={styles.durationPickers}>
+              <Picker
+                selectedValue={sleepHours < 0 ? 8 : sleepHours}
+                onValueChange={value => {
+                  if (sleepHours !== Number(value)) selection();
+                  setSleepHours(Number(value));
+                  setUnusualSleepConfirmed(false);
+                }}
+                dropdownIconColor={palette.text}
+                style={styles.picker}>
+                {Array.from({ length: 15 }, (_, hour) => <Picker.Item key={hour} label={`${hour} hr`} value={hour} />)}
+              </Picker>
+              <Picker
+                selectedValue={sleepMinutes}
+                onValueChange={value => {
+                  if (sleepMinutes !== Number(value)) selection();
+                  setSleepMinutes(Number(value));
+                  setUnusualSleepConfirmed(false);
+                }}
+                dropdownIconColor={palette.text}
+                style={styles.picker}>
+                {[0, 15, 30, 45].map(minutes => <Picker.Item key={minutes} label={`${minutes} min`} value={minutes} />)}
+              </Picker>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={symptomSheetOpen} transparent animationType="slide" onRequestClose={dismissSymptomSheet}>
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <View style={styles.symptomSheet}>
+            <View style={styles.symptomFixedHeader} {...symptomSheetPanResponder.panHandlers}>
+              <View style={styles.sheetHandle} />
+              <View style={styles.sheetHeader}>
+                <View style={styles.sheetHeaderCopy}>
+                  <Text style={styles.sheetTitle}>Localized symptom</Text>
+                  <Text style={styles.sheetCopy}>Record what you notice. This is not a diagnosis.</Text>
+                </View>
+                <Pressable accessibilityRole="button" accessibilityLabel="Close symptom details" onPress={dismissSymptomSheet} style={styles.closeButton}>
+                  <MaterialIcons name="close" size={21} color={palette.text} />
+                </Pressable>
+              </View>
+            </View>
+
+            <ScrollView
+              ref={symptomScrollRef}
+              style={styles.symptomScroll}
+              contentContainerStyle={styles.symptomSheetContent}
+              keyboardShouldPersistTaps="handled">
+              <View
+                style={styles.questionGroup}
+                onLayout={event => { symptomFieldOffsets.current.location = event.nativeEvent.layout.y; }}>
+                <Text style={styles.questionLabel}>Where is it?</Text>
+                <Choice
+                  dense
+                  value={location}
+                  onChange={value => {
+                    setLocation(value);
+                    if (value !== 'other') setOtherLocationDetail('');
+                  }}
+                  options={(Object.entries(locationLabels) as [ReadinessLocation, string][])
+                    .map(([value, label]) => ({ value, label }))}
+                />
+                {location === 'other' ? (
+                  <TextInput
+                    value={otherLocationDetail}
+                    onChangeText={setOtherLocationDetail}
+                    placeholder="Name the specific area"
+                    placeholderTextColor={palette.muted}
+                    style={styles.input}
+                  />
+                ) : null}
+              </View>
+
+              <View
+                style={styles.questionGroup}
+                onLayout={event => { symptomFieldOffsets.current.sensation = event.nativeEvent.layout.y; }}>
+                <Text style={styles.questionLabel}>How would you describe it?</Text>
+                <Choice
+                  dense
+                  value={sensation}
+                  onChange={setSensation}
+                  options={[
+                    { value: 'minor-tightness', label: sensationLabels['minor-tightness'], detail: 'Tight or stiff; may ease during warm-up.' },
+                    { value: 'lingering-niggle', label: sensationLabels['lingering-niggle'], detail: 'Persistent pulling, aching, or discomfort.' },
+                    { value: 'severe-acute', label: sensationLabels['severe-acute'], detail: 'Sharp, sudden, or affecting normal movement.' },
+                  ]}
+                />
+              </View>
+
+              <View
+                style={styles.questionGroup}
+                onLayout={event => { symptomFieldOffsets.current.movement = event.nativeEvent.layout.y; }}>
+                <Text style={styles.questionLabel}>Does it affect normal movement or make you hold back?</Text>
+                <Choice
+                  compact
+                  dense
+                  value={hesitatesAtMaxEffort}
+                  onChange={setHesitatesAtMaxEffort}
+                  options={[
+                    { value: false, label: 'No' },
+                    { value: true, label: 'Yes' },
+                  ]}
+                />
+              </View>
+
+              <View style={styles.questionGroup}>
+                <Text style={styles.questionLabel}>Optional note</Text>
+                <TextInput
+                  value={painNotes}
+                  onChangeText={setPainNotes}
+                  multiline
+                  placeholder="When it began or what you noticed"
+                  placeholderTextColor={palette.muted}
+                  style={[styles.input, styles.notes]}
+                />
+              </View>
+            </ScrollView>
+            <View style={styles.symptomFooter}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !symptomComplete }}
+                onPress={saveSymptomSheet}
+                style={[styles.symptomSave, !symptomComplete && styles.symptomSaveDisabled]}>
+                <Text style={[styles.symptomSaveText, !symptomComplete && styles.symptomSaveTextDisabled]}>Save symptom details</Text>
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+    </SafeAreaView>
+  );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (palette: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.bg },
-  page: { padding: 20, paddingBottom: 40, gap: 16, width: '100%', maxWidth: 760, alignSelf: 'center' },
-  back: { width: 44, height: 44, borderRadius: 14, backgroundColor: palette.surface, alignItems: 'center', justifyContent: 'center' },
-  partHead: { flexDirection: 'row', alignItems: 'center', gap: 11, marginTop: 6 },
-  partNumber: { width: 30, height: 30, borderRadius: 15, textAlign: 'center', textAlignVertical: 'center', lineHeight: 30, color: '#0B1000', backgroundColor: palette.accent, fontSize: 14, fontWeight: '900' },
-  partTitle: { color: palette.text, fontSize: 17, fontWeight: '900' },
-  partCopy: { color: palette.muted, fontSize: 12, marginTop: 2 },
-  formCard: { gap: 20 },
-  branchCard: { gap: 4, borderColor: '#59411F' },
-  field: { paddingTop: 18, borderTopWidth: 1, borderTopColor: palette.border },
-  label: { color: palette.text, fontWeight: '800', fontSize: 14, marginBottom: 5 },
-  hint: { color: palette.muted, fontSize: 12, lineHeight: 17 },
-  input: { backgroundColor: palette.surface2, borderColor: palette.border, borderWidth: 1, borderRadius: 13, minHeight: 52, color: palette.text, paddingHorizontal: 14, fontSize: 16 },
-  notes: { minHeight: 88, paddingTop: 14, marginTop: 10, textAlignVertical: 'top' },
-  scale: { flexDirection: 'row', gap: 5, marginTop: 12 },
-  scaleItem: { flex: 1, height: 36, minWidth: 25, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.surface2 },
-  scaleActive: { backgroundColor: palette.accent },
-  scaleText: { color: palette.muted, fontSize: 12, fontWeight: '800' },
-  scaleTextActive: { color: '#0B1000' },
-  choiceList: { gap: 8, marginTop: 12 },
-  choice: { minHeight: 46, borderRadius: 12, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface2, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  shell: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
+  header: { minHeight: 66, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  back: { width: 44, height: 44, borderRadius: 15, backgroundColor: palette.surface, alignItems: 'center', justifyContent: 'center' },
+  headerCopy: { flex: 1 },
+  eyebrow: { color: palette.accent, fontSize: 10, fontWeight: '900', letterSpacing: 1.5 },
+  headerTitle: { color: palette.text, fontSize: 18, fontWeight: '900', marginTop: 2 },
+  skipTop: { minWidth: 44, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center' },
+  skipTopText: { color: palette.muted, fontSize: 13, fontWeight: '800' },
+  progressWrap: { paddingHorizontal: 20, paddingVertical: 10, flexDirection: 'row', alignItems: 'center' },
+  progressItem: { flex: 1, flexDirection: 'row', alignItems: 'center', minWidth: 0 },
+  progressDot: { width: 24, height: 24, borderRadius: 12, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, alignItems: 'center', justifyContent: 'center' },
+  progressDotActive: { borderColor: palette.accent, backgroundColor: palette.accent },
+  progressNumber: { color: palette.muted, fontSize: 10, fontWeight: '900' },
+  progressNumberActive: { color: '#081000' },
+  progressLabel: { color: palette.muted, fontSize: 10, fontWeight: '800', marginLeft: 6 },
+  progressLabelActive: { color: palette.text },
+  progressLine: { flex: 1, height: 1, backgroundColor: palette.border, marginHorizontal: 8 },
+  progressLineActive: { backgroundColor: palette.accent },
+  page: { padding: 20, paddingBottom: 28, flexGrow: 1 },
+  stage: { gap: 24 },
+  stageTitle: { color: palette.text, fontSize: 31, lineHeight: 36, fontWeight: '900' },
+  stageCopy: { color: palette.muted, fontSize: 14, lineHeight: 20, marginTop: 6 },
+  questionGroup: { gap: 4 },
+  questionLabel: { color: palette.text, fontSize: 15, lineHeight: 20, fontWeight: '900', marginBottom: 7 },
+  valueRow: { minHeight: 58, borderRadius: 15, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.border, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, gap: 10 },
+  valueIcon: { width: 34, height: 34, borderRadius: 10, backgroundColor: palette.accentDark, alignItems: 'center', justifyContent: 'center' },
+  valueRowLabel: { color: palette.text, fontSize: 14, fontWeight: '800', flex: 1 },
+  valueRowValue: { color: palette.text, fontSize: 14, fontWeight: '900' },
+  valuePlaceholder: { color: palette.muted },
+  unusualRow: { minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: '#6D4720', backgroundColor: '#2A1B0C', flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 11, marginTop: 7 },
+  unusualRowConfirmed: { borderColor: palette.accent, backgroundColor: palette.accentDark },
+  unusualText: { color: palette.text, fontSize: 11, lineHeight: 16, fontWeight: '700', flex: 1 },
+  baselineText: { color: palette.muted, fontSize: 11, marginTop: 5 },
+  scale: { flexDirection: 'row', gap: 7 },
+  scaleItem: { flex: 1, minWidth: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface },
+  scaleActive: { borderColor: palette.accent, backgroundColor: palette.accent },
+  scaleText: { color: palette.text, fontSize: 14, fontWeight: '900' },
+  scaleTextActive: { color: '#081000' },
+  scaleEndpoints: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6, paddingHorizontal: 2 },
+  endpoint: { color: palette.muted, fontSize: 11, fontWeight: '700' },
+  choiceList: { gap: 7 },
+  choiceListHorizontal: { flexDirection: 'row' },
+  choice: { minHeight: 48, borderRadius: 13, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 9 },
+  choiceDense: { minHeight: 44, paddingVertical: 6 },
+  choiceCompact: { flex: 1 },
   choiceSelected: { borderColor: palette.accent, backgroundColor: palette.accentDark },
-  choiceDot: { width: 14, height: 14, borderRadius: 7, borderWidth: 2, borderColor: palette.muted },
-  choiceDotSelected: { borderColor: palette.accent, backgroundColor: palette.accent },
-  choiceLabel: { color: palette.text, fontSize: 13, fontWeight: '800' },
+  choiceDot: { width: 17, height: 17, borderRadius: 9, borderWidth: 2, borderColor: palette.muted, alignItems: 'center', justifyContent: 'center' },
+  choiceDotSelected: { borderColor: palette.accent },
+  choiceDotCenter: { width: 7, height: 7, borderRadius: 4, backgroundColor: palette.accent },
+  choiceContent: { flex: 1 },
+  choiceLabel: { color: palette.text, fontSize: 13, lineHeight: 18, fontWeight: '800' },
   choiceLabelSelected: { color: palette.accent },
-  choiceDetail: { color: palette.muted, fontSize: 11, lineHeight: 16, marginTop: 3 },
-  resultCard: { gap: 14, borderWidth: 1.5 },
-  resultHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  signal: { width: 16, height: 16, borderRadius: 8 },
+  choiceDetail: { color: palette.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
+  symptomSummary: { minHeight: 56, borderRadius: 13, borderWidth: 1, borderColor: '#6D4720', backgroundColor: '#2A1B0C', flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 12, marginTop: 8 },
+  symptomSummaryCopy: { flex: 1 },
+  symptomSummaryTitle: { color: palette.text, fontSize: 12, fontWeight: '900' },
+  symptomSummaryText: { color: palette.muted, fontSize: 11, marginTop: 2 },
+  editText: { color: palette.accent, fontSize: 12, fontWeight: '900' },
+  resultCard: { gap: 15, borderWidth: 1.5, padding: 18 },
+  resultHead: { flexDirection: 'row', alignItems: 'center', gap: 11 },
+  resultHeading: { flex: 1 },
+  signal: { width: 15, height: 15, borderRadius: 8 },
   resultLevel: { fontSize: 12, fontWeight: '900', letterSpacing: 1.1, textTransform: 'uppercase' },
-  resultTitle: { color: palette.text, fontSize: 21, fontWeight: '900', marginTop: 2 },
-  reasonList: { gap: 7 },
-  reasonRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
-  reasonDot: { fontSize: 18, lineHeight: 18, fontWeight: '900' },
-  reasonText: { flex: 1, color: palette.text, fontSize: 13, lineHeight: 18 },
-  guidance: { color: palette.muted, fontSize: 12, lineHeight: 18, borderTopWidth: 1, borderTopColor: palette.border, paddingTop: 12 },
-  resultEmpty: { flexDirection: 'row', alignItems: 'center', gap: 12, borderStyle: 'dashed' },
-  resultEmptyText: { flex: 1, color: palette.muted, fontSize: 13, lineHeight: 18 },
-  disclaimer: { color: palette.muted, fontSize: 11, lineHeight: 16, textAlign: 'center', paddingHorizontal: 8 },
-  skipWrap: { alignItems: 'center', gap: 8, marginTop: 2 },
-  skipHint: { color: palette.muted, fontSize: 11, textAlign: 'center' },
-  skipButton: { minHeight: 44, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center' },
-  skipText: { color: palette.muted, fontSize: 13, fontWeight: '800', textDecorationLine: 'underline' },
-  skipConfirm: { width: '100%', gap: 8, borderColor: '#553032' },
-  skipConfirmTitle: { color: palette.text, fontSize: 15, fontWeight: '900' },
-  skipConfirmCopy: { color: palette.muted, fontSize: 12, lineHeight: 17 },
-  skipActions: { flexDirection: 'row', gap: 8, marginTop: 3 },
-  keepButton: { flex: 1, minHeight: 42, borderRadius: 11, backgroundColor: palette.surface2, alignItems: 'center', justifyContent: 'center' },
-  keepText: { color: palette.text, fontSize: 12, fontWeight: '900' },
-  confirmButton: { flex: 1, minHeight: 42, borderRadius: 11, backgroundColor: '#301719', alignItems: 'center', justifyContent: 'center' },
-  confirmText: { color: palette.red, fontSize: 12, fontWeight: '900' },
+  resultTitle: { color: palette.text, fontSize: 24, fontWeight: '900', marginTop: 2 },
+  guidance: { color: palette.text, fontSize: 13, lineHeight: 19, fontWeight: '700' },
+  reasonList: { gap: 8, borderTopWidth: 1, borderTopColor: palette.border, paddingTop: 13 },
+  reasonRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 9 },
+  reasonIcon: { marginTop: 6 },
+  reasonText: { color: palette.muted, fontSize: 12, lineHeight: 18, flex: 1 },
+  reassessment: { gap: 5, borderColor: '#6D4720' },
+  reassessmentCopy: { color: palette.muted, fontSize: 12, lineHeight: 17, marginBottom: 8 },
+  safetyNote: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, paddingHorizontal: 4 },
+  safetyText: { color: palette.muted, fontSize: 11, lineHeight: 16, flex: 1 },
+  editAnswers: { minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
+  editAnswersText: { color: palette.muted, fontSize: 12, fontWeight: '800' },
+  bottomBar: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 12, borderTopWidth: 1, borderTopColor: palette.border, backgroundColor: palette.bg },
+  modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.65)' },
+  sheet: { backgroundColor: palette.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 32, borderTopWidth: 1, borderColor: palette.border },
+  symptomSheet: { height: '82%', maxHeight: 700, backgroundColor: palette.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderTopWidth: 1, borderColor: palette.border, overflow: 'hidden' },
+  symptomFixedHeader: { paddingHorizontal: 18, paddingTop: 9, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: palette.border },
+  symptomScroll: { flex: 1 },
+  symptomSheetContent: { padding: 18, paddingBottom: 24, gap: 17 },
+  sheetHandle: { width: 42, height: 4, borderRadius: 2, backgroundColor: palette.border, alignSelf: 'center', marginBottom: 10 },
+  sheetHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  sheetHeaderCopy: { flex: 1 },
+  sheetTitle: { color: palette.text, fontSize: 20, fontWeight: '900' },
+  sheetCopy: { color: palette.muted, fontSize: 12, lineHeight: 17, marginTop: 3 },
+  doneButton: { minWidth: 58, minHeight: 44, borderRadius: 12, backgroundColor: palette.accent, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 13 },
+  doneText: { color: '#081000', fontSize: 13, fontWeight: '900' },
+  closeButton: { width: 44, height: 44, borderRadius: 13, backgroundColor: palette.surface2, alignItems: 'center', justifyContent: 'center' },
+  symptomFooter: { paddingHorizontal: 18, paddingTop: 10, paddingBottom: Platform.OS === 'ios' ? 22 : 14, borderTopWidth: 1, borderTopColor: palette.border, backgroundColor: palette.surface },
+  symptomSave: { minHeight: 50, borderRadius: 14, backgroundColor: palette.accent, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
+  symptomSaveDisabled: { backgroundColor: palette.surface2, borderWidth: 1, borderColor: palette.border },
+  symptomSaveText: { color: '#081000', fontSize: 14, fontWeight: '900' },
+  symptomSaveTextDisabled: { color: palette.muted },
+  durationPickers: { flexDirection: 'row', gap: 8, marginTop: 14 },
+  picker: { flex: 1, color: palette.text, backgroundColor: palette.surface2 },
+  input: { minHeight: 48, borderRadius: 12, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface2, color: palette.text, paddingHorizontal: 12, fontSize: 14, marginTop: 7 },
+  notes: { minHeight: 78, paddingTop: 12, textAlignVertical: 'top' },
 });

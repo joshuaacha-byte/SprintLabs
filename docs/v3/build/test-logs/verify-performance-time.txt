@@ -1,0 +1,12 @@
+
+> sprintlab@1.0.0 verify:performance-time
+> node --experimental-strip-types --loader ./scripts/alias-loader.mjs ./scripts/verify-performance-time.ts
+
+(node:5195) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./scripts/alias-loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+Performance-time input range verification passed.
+(node:5195) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/joshuaacha/Desktop/sprintlab/scripts/verify-performance-time.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/joshuaacha/Desktop/sprintlab/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)

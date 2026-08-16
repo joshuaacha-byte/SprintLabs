@@ -20,12 +20,15 @@ const LOGS = 'sprintlab:logs';
 const WORKOUT_DRAFT = 'sprintlab:workout-draft';
 const TODAY_WORKOUT = 'sprintlab:today-workout';
 const WEEK_SCHEDULE = 'sprintlab:week-schedule';
+const WEEK_SCHEDULE_SAVED = 'sprintlab:week-schedule-saved';
 const READINESS = 'sprintlab:readiness';
 const ACTIVE_SESSION = 'sprintlab:active-workout-session';
 const COMPLETED_SESSIONS = 'sprintlab:completed-workout-sessions';
 const TRAINING_HISTORY = 'sprintlab:training-history';
 const FUTURE_WORKOUT_OVERRIDES = 'sprintlab:future-workout-overrides';
 const PENDING_WORKOUT_LAUNCH = 'sprintlab:pending-workout-launch';
+const WEEK_SCHEDULE_HISTORY = 'sprintlab:week-schedule-history';
+const WEEK_SCHEDULE_HISTORY_MAX_ENTRIES = 120;
 
 const localDateKey = (date = new Date()) => date.toLocaleDateString('en-CA');
 
@@ -42,7 +45,7 @@ export async function getLogs(): Promise<TrainingLogSummary[]> {
 
 export async function addLog(log: TrainingLogSummary) {
   const logs = await getLogs();
-  await AsyncStorage.setItem(LOGS, JSON.stringify([log, ...logs]));
+  await AsyncStorage.setItem(LOGS, JSON.stringify([log, ...logs.filter(existing => existing.id !== log.id)]));
 }
 
 function newestFirst<T extends { completedAt?: string | null; date?: string; createdAt?: string }>(records: T[]) {
@@ -122,6 +125,7 @@ export async function updateTrainingLog(log: TrainingLog) {
       notes: updated.generalNotes,
     })));
   }
+  refreshWorkoutReminders();
   return updated;
 }
 
@@ -136,6 +140,7 @@ export async function deleteTrainingLog(id: string) {
     AsyncStorage.setItem(COMPLETED_SESSIONS, JSON.stringify(sessions.filter(session => !matchedSessionIds.includes(session.id)))),
     AsyncStorage.setItem(LOGS, JSON.stringify(summaries.filter(summary => summary.id !== id && (!summary.sessionId || !matchedSessionIds.includes(summary.sessionId))))),
   ]);
+  refreshWorkoutReminders();
 }
 
 export async function getFutureWorkoutOverrides(): Promise<FutureWorkoutOverride[]> {
@@ -148,6 +153,7 @@ export async function saveFutureWorkoutOverride(workout: PlannedWorkout, date: s
   const override: FutureWorkoutOverride = {
     id: `scheduled-override:${date}:${Date.now()}`,
     date,
+    kind: 'workout',
     workout: clone(workout),
     sourceTrainingLogId,
   };
@@ -155,6 +161,25 @@ export async function saveFutureWorkoutOverride(workout: PlannedWorkout, date: s
     override,
     ...overrides.filter(item => item.date !== date),
   ]));
+  refreshWorkoutReminders();
+  return override;
+}
+
+/** Marks a single future date as rest without touching the recurring weekly template. */
+export async function saveRestDateOverride(date: string, restTitle = 'Rest day', restNote = 'No training is scheduled.') {
+  const overrides = await getFutureWorkoutOverrides();
+  const override: FutureWorkoutOverride = {
+    id: `scheduled-override:${date}:${Date.now()}`,
+    date,
+    kind: 'rest',
+    restTitle,
+    restNote,
+  };
+  await AsyncStorage.setItem(FUTURE_WORKOUT_OVERRIDES, JSON.stringify([
+    override,
+    ...overrides.filter(item => item.date !== date),
+  ]));
+  refreshWorkoutReminders();
   return override;
 }
 
@@ -208,8 +233,31 @@ export async function getWeekSchedule(): Promise<ScheduledDay[]> {
   return schedule;
 }
 
+/** Distinguishes a genuinely saved athlete week from the sample/default schedule. */
+export async function hasSavedWeekSchedule(): Promise<boolean> {
+  return (await AsyncStorage.getItem(WEEK_SCHEDULE_SAVED)) === 'true';
+}
+
+export type ScheduleHistoryEntry = { effectiveFrom: string; schedule: ScheduledDay[] };
+
+/** Dated snapshots of the recurring plan, so past-date lookups (streaks, weekly adherence) reflect what was actually scheduled then, not today's edited plan. */
+export async function getScheduleHistory(): Promise<ScheduleHistoryEntry[]> {
+  const value = await AsyncStorage.getItem(WEEK_SCHEDULE_HISTORY);
+  return value ? JSON.parse(value) : [];
+}
+
 export async function saveWeekSchedule(schedule: ScheduledDay[]) {
-  await AsyncStorage.setItem(WEEK_SCHEDULE, JSON.stringify(normalizeSchedule(schedule)));
+  const normalized = normalizeSchedule(schedule);
+  const today = localDateKey();
+  const history = await getScheduleHistory();
+  const nextHistory = [...history.filter(entry => entry.effectiveFrom !== today), { effectiveFrom: today, schedule: normalized }]
+    .sort((first, second) => first.effectiveFrom.localeCompare(second.effectiveFrom))
+    .slice(-WEEK_SCHEDULE_HISTORY_MAX_ENTRIES);
+  await AsyncStorage.multiSet([
+    [WEEK_SCHEDULE, JSON.stringify(normalized)],
+    [WEEK_SCHEDULE_SAVED, 'true'],
+    [WEEK_SCHEDULE_HISTORY, JSON.stringify(nextHistory)],
+  ]);
   refreshWorkoutReminders();
 }
 
@@ -217,16 +265,34 @@ export async function getScheduledDay(dayIndex: number = new Date().getDay(), da
   const safeDayIndex: WeekdayIndex = isWeekdayIndex(dayIndex) ? dayIndex : 1;
   const override = (await getFutureWorkoutOverrides()).find(item => item.date === date);
   if (override) {
-    return {
-      dayIndex: safeDayIndex,
-      shortLabel: weekdayLabels[safeDayIndex].short,
-      fullLabel: weekdayLabels[safeDayIndex].full,
-      kind: 'workout',
-      workout: clone(override.workout),
-    };
+    if (override.kind === 'rest') {
+      return {
+        dayIndex: safeDayIndex,
+        shortLabel: weekdayLabels[safeDayIndex].short,
+        fullLabel: weekdayLabels[safeDayIndex].full,
+        kind: 'rest',
+        restTitle: override.restTitle || 'Rest day',
+        restNote: override.restNote || 'No training is scheduled.',
+      };
+    }
+    if (override.workout) {
+      return {
+        dayIndex: safeDayIndex,
+        shortLabel: weekdayLabels[safeDayIndex].short,
+        fullLabel: weekdayLabels[safeDayIndex].full,
+        kind: 'workout',
+        workout: clone(override.workout),
+      };
+    }
   }
   const schedule = await getWeekSchedule();
   return schedule.find(day => day.dayIndex === safeDayIndex) ?? clone(defaultWeekSchedule[0]);
+}
+
+/** Same lookup as getScheduledDay, but derives the weekday from an ISO date so callers only need the date. */
+export async function getScheduledDayForDate(date: string): Promise<ScheduledDay> {
+  const dayIndex = new Date(`${date}T00:00:00`).getDay();
+  return getScheduledDay(dayIndex, date);
 }
 
 export async function saveDayWorkout(dayIndex: WeekdayIndex, workout: PlannedWorkout) {
@@ -352,5 +418,6 @@ export async function getCompletedWorkoutSessions(): Promise<CompletedWorkoutSes
 
 export async function addCompletedWorkoutSession(session: CompletedWorkoutSession) {
   const sessions = await getCompletedWorkoutSessions();
-  await AsyncStorage.setItem(COMPLETED_SESSIONS, JSON.stringify([session, ...sessions]));
+  // A session keeps the same id from start to finish; guards against a double-tap on "Finish" creating two records.
+  await AsyncStorage.setItem(COMPLETED_SESSIONS, JSON.stringify([session, ...sessions.filter(existing => existing.id !== session.id)]));
 }

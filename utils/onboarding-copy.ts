@@ -11,13 +11,12 @@ const goalNames: Record<SpeedGoal, string> = {
 
 export function sportReaction(sport: AthleteSport) {
   if (sport === 'track-and-field') return 'Perfect. Your events and training season will shape the setup.';
-  if (sport === 'football') return 'Got it. We’ll keep acceleration, top speed, and testing goals in view.';
-  if (sport === 'general-athletic-performance') return 'Works for me. We’ll build around the speed qualities you care about.';
-  return 'Nice. We’ll keep the focus on speed that transfers to your sport.';
+  if (sport === 'football') return 'Got it. The 40-yard pathway will connect acceleration, upright speed, and testing preparation.';
+  if (sport === 'general-athletic-performance') return 'Works for me. We’ll build a general linear-speed foundation around the qualities you care about.';
+  return 'Nice. We’ll build a general linear-speed foundation around your schedule and the speed qualities you care about.';
 }
 
 export function splitContextLine(profile: AthleteProfile) {
-  if (profile.trackAccess === 'none') return 'No track? That’s fine. We’ll work with the space you have.';
   if ((profile.sportPracticeDays?.length ?? 0) >= 3) return 'Your sport schedule is already demanding. I’ll avoid stacking unnecessary work.';
   if (profile.trainingPlanMode === 'log-coach-plan' || profile.followsCoachCreatedPlan) return 'Perfect. I’ll help you execute and log training without replacing your coach.';
   if (profile.experienceLevel === 'beginner' || profile.experienceLevel === 'developing') return 'We’ll start simple and build quality before volume.';
@@ -28,13 +27,28 @@ export function splitContextLine(profile: AthleteProfile) {
 export function profileSummary(profile: AthleteProfile) {
   const name = profile.name.trim() || 'You';
   const sport = profile.primarySport ?? profile.sport ?? 'track-and-field';
-  const role = sport === 'track-and-field' ? [profile.primaryEvent, ...profile.secondaryEvents].join('/') : profile.sportPosition || sportNames[sport];
+  const role = sport === 'track-and-field'
+    ? [profile.primaryEvent, ...profile.secondaryEvents].join('/')
+    : sport === 'football'
+      ? '40-yard'
+      : sportNames[sport];
   const goals = (profile.speedGoals ?? []).slice(0, 3).map(goal => goalNames[goal]).join(', ');
-  const days = profile.availableTrainingDays.length || profile.trainingDaysPerWeek;
-  return `${name === 'You' ? 'You’re' : `${name} is`} a ${role} ${sportNames[sport]} focused on ${goals || 'speed development'} with ${days} available training day${days === 1 ? '' : 's'} each week.`;
+  return `${name === 'You' ? 'You’re' : `${name} is`} a ${role} ${sportNames[sport]} focused on ${goals || 'speed development'}.`;
 }
 
 export function classificationExplanation(profile: AthleteProfile) {
-  const pathway = sportPathway(profile).replaceAll('-', ' ');
-  return `Your current speed pathway is ${pathway}. It reflects your sport, goals, and training context—not a generated plan.`;
+  const pathwayNames = {
+    'track-short-sprint': 'short-sprint',
+    'track-long-sprint': 'long-sprint',
+    'linear-acceleration': 'linear-acceleration',
+    'maximum-velocity': 'maximum-velocity',
+    'multidirectional-field-sport': 'multidirectional-speed',
+    'repeated-sprint-field-sport': 'repeated-sprint',
+    'court-speed': 'court-speed',
+    'combine-preparation': 'combine-preparation',
+    'general-speed-development': 'general-speed',
+    'logging-only': 'training-log',
+  } as const;
+  const pathway = pathwayNames[sportPathway(profile)];
+  return `Your ${pathway} pathway uses your goals, schedule, and training context to shape your starting week.`;
 }
