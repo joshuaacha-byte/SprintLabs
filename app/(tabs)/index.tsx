@@ -136,7 +136,7 @@ export default function TodayScreen() {
 
 const createStyles = (palette: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.bg }, page: { padding: 20, paddingBottom: 36, gap: 18, width: '100%', maxWidth: 820, alignSelf: 'center' },
-  top: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, brand: { color: palette.text, fontWeight: '900', fontSize: 18, letterSpacing: 1 },
+  top: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, brandColumn: { gap: 5 },
   avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: palette.surface2, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: palette.border }, avatarText: { color: palette.text, fontWeight: '800' },
   emptyReadiness: { flexDirection: 'row', alignItems: 'center', gap: 12, borderStyle: 'dashed', paddingVertical: 12 }, iconCircle: { width: 40, height: 40, borderRadius: 12, backgroundColor: palette.accentDark, alignItems: 'center', justifyContent: 'center' },
   setupCard: { flexDirection: 'row', alignItems: 'center', gap: 12, borderColor: palette.accentDark },
