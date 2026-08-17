@@ -2,10 +2,14 @@ import type { CompletedWorkoutSession, PostWorkoutReview, ScheduledDay, WeekdayI
 import {
   calculateConsistencyStreak,
   calculateCurrentWeekCompletion,
+  calculateLongestPlanStreak,
+  calculatePlanConsistency,
   calculatePlanStreak,
+  countPlannedWorkoutsCompleted,
   getWorkoutCompletionCelebrationState,
+  isPerfectWeek,
 } from '../utils/streaks.ts';
-import type { ScheduleHistoryEntry } from '../utils/progress.ts';
+import { buildWeeklyProgress, type ScheduleHistoryEntry } from '../utils/progress.ts';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -347,12 +351,15 @@ check('legacy sessions without scheduledDate never count toward Plan Streak (not
 // --- Milestone detection ----------------------------------------------------
 
 check('milestone flag is set only when crossing a milestone threshold, not on every completion', () => {
+  // PLAN_STREAK_MILESTONES starts at 7 — build 6 consecutive Mon/Wed/Fri completions across two
+  // weeks, then complete a 7th (the following Monday) to cross the first milestone.
   const monday = mondayWeeksAgo(0);
-  const prior = [session(dateKeyFor(monday, 0)), session(dateKeyFor(monday, 2))]; // Plan Streak of 2 so far
-  const justSaved = session(dateKeyFor(monday, 4)); // Friday completes a 3rd in a row -> milestone at 3
-  const state = getWorkoutCompletionCelebrationState(mwfSchedule, [], prior, justSaved, new Date(dateKeyFor(monday, 4) + 'T18:00:00'));
-  assert(state.planStreak.current === 3, `expected current streak 3, got ${state.planStreak.current}`);
-  assert(state.planStreak.isMilestone, 'expected isMilestone=true at 3-session Plan Streak');
+  const priorOffsets = [0, 2, 4, 7, 9, 11]; // week0 Mon/Wed/Fri, week1 Mon/Wed/Fri
+  const prior = priorOffsets.map(offset => session(dateKeyFor(monday, offset)));
+  const justSaved = session(dateKeyFor(monday, 14)); // week2 Monday — 7th in a row -> milestone at 7
+  const state = getWorkoutCompletionCelebrationState(mwfSchedule, [], prior, justSaved, new Date(dateKeyFor(monday, 14) + 'T18:00:00'));
+  assert(state.planStreak.current === 7, `expected current streak 7, got ${state.planStreak.current}`);
+  assert(state.planStreak.isMilestone, 'expected isMilestone=true at 7-session Plan Streak');
 });
 
 check('an honest "maintained" celebration is returned when a linked session does not move the Plan Streak', () => {
@@ -362,6 +369,100 @@ check('an honest "maintained" celebration is returned when a linked session does
   const justSaved = session(dateKeyFor(monday, 2)); // Wednesday, first completion this eval -> should be 'started', not 'maintained'.
   const state = getWorkoutCompletionCelebrationState(mwfSchedule, [], prior, justSaved, new Date(dateKeyFor(monday, 2) + 'T18:00:00'));
   assert(state.kind === 'started', `expected 'started' for a first-ever completion, got '${state.kind}'`);
+});
+
+// --- Streak System V2 additions -------------------------------------------
+
+check('longest Plan Streak survives a later break (a broken current streak does not erase history)', () => {
+  const monday = mondayWeeksAgo(2);
+  // Week -2: Mon/Wed/Fri all completed (streak of 3, the historical max).
+  const s = [session(dateKeyFor(monday, 0)), session(dateKeyFor(monday, 2)), session(dateKeyFor(monday, 4))];
+  // Week -1: Monday missed entirely (breaks the run); current streak is now 0.
+  const now = new Date(dateKeyFor(monday, 9) + 'T12:00:00'); // the following Wednesday, after Monday passed uncompleted
+  const current = calculatePlanStreak(mwfSchedule, s, now);
+  const longest = calculateLongestPlanStreak(mwfSchedule, s, now);
+  assert(current === 0, `expected current streak 0 after the break, got ${current}`);
+  assert(longest === 3, `expected longest streak 3 preserved from before the break, got ${longest}`);
+});
+
+check('lifetime planned-workout count is unaffected by a broken streak', () => {
+  const monday = mondayWeeksAgo(2);
+  const s = [session(dateKeyFor(monday, 0)), session(dateKeyFor(monday, 2)), session(dateKeyFor(monday, 4)), session(dateKeyFor(monday, 14))];
+  const count = countPlannedWorkoutsCompleted(mwfSchedule, s);
+  assert(count === 4, `expected 4 lifetime planned workouts regardless of streak continuity, got ${count}`);
+});
+
+check('lifetime planned-workout count dedupes multiple sessions on the same scheduled day', () => {
+  const monday = mondayWeeksAgo(0);
+  const s = [session(dateKeyFor(monday, 0)), session(dateKeyFor(monday, 0))];
+  const count = countPlannedWorkoutsCompleted(mwfSchedule, s);
+  assert(count === 1, `expected 1 (deduped), got ${count}`);
+});
+
+// calculatePlanConsistency uses a trailing N-day window (not a calendar-week window), so the
+// window boundaries below are chosen to land exactly on Wed+Fri (offsets 2 and 4) with no
+// wraparound into a prior/later week's Mon/Wed/Fri days.
+check('plan consistency (5-day trailing window) counts only required (scheduled workout) days that have passed', () => {
+  const monday = mondayWeeksAgo(0);
+  const s = [session(dateKeyFor(monday, 2)), session(dateKeyFor(monday, 4))]; // Wed, Fri completed
+  const now = new Date(dateKeyFor(monday, 5) + 'T12:00:00'); // Saturday — window covers Tue..Fri, i.e. Wed+Fri required
+  const result = calculatePlanConsistency(mwfSchedule, s, now, 5);
+  assert(result.required === 2, `expected 2 required days so far, got ${result.required}`);
+  assert(result.completed === 2, `expected 2 completed, got ${result.completed}`);
+  assert(result.percentage === 100, `expected 100%, got ${result.percentage}%`);
+});
+
+check('plan consistency (5-day trailing window) reflects a missed session', () => {
+  const monday = mondayWeeksAgo(0);
+  const s = [session(dateKeyFor(monday, 4))]; // Fri completed only; Wed will be missed
+  const now = new Date(dateKeyFor(monday, 5) + 'T12:00:00'); // Saturday — Wed+Fri both required, Wed missed
+  const result = calculatePlanConsistency(mwfSchedule, s, now, 5);
+  assert(result.required === 2, `expected 2 required, got ${result.required}`);
+  assert(result.completed === 1, `expected 1 completed, got ${result.completed}`);
+  assert(result.percentage === 50, `expected 50%, got ${result.percentage}%`);
+});
+
+check('plan consistency (30-day window) spans roughly 4 weeks of the recurring Mon/Wed/Fri plan, not just the current week', () => {
+  const monday = mondayWeeksAgo(0);
+  // Complete every Mon/Wed/Fri going back 4 full weeks (12 sessions) — all required days met.
+  const s = Array.from({ length: 4 }, (_, week) => [0, 2, 4].map(offset => dateKeyFor(monday, offset - week * 7)))
+    .flat()
+    .map(dateKey => session(dateKey));
+  const now = new Date(dateKeyFor(monday, 4) + 'T18:00:00'); // Friday, after this week's Fri session
+  const result = calculatePlanConsistency(mwfSchedule, s, now, 28); // exactly 4 weeks — avoids spilling into a 5th week's Friday with no fixture session
+  assert(result.required > 2, `expected the 30-day window to span more than a single week's worth of required days, got ${result.required}`);
+  assert(result.completed === result.required, `expected every required day in the window to be completed, got ${result.completed}/${result.required}`);
+  assert(result.percentage === 100, `expected 100%, got ${result.percentage}%`);
+});
+
+check('a week with every eligible session completed is a perfect week; a partial week is not', () => {
+  const monday = mondayWeeksAgo(0);
+  const now = new Date(dateKeyFor(monday, 4) + 'T18:00:00'); // Friday, after all 3 Mon/Wed/Fri sessions are due
+  const perfect = calculateCurrentWeekCompletion(mwfSchedule, [session(dateKeyFor(monday, 0)), session(dateKeyFor(monday, 2)), session(dateKeyFor(monday, 4))], now);
+  const partial = calculateCurrentWeekCompletion(mwfSchedule, [session(dateKeyFor(monday, 0))], now);
+  assert(isPerfectWeek(perfect), 'expected a fully-completed eligible week to be perfect');
+  assert(!isPerfectWeek(partial), 'expected a partially-completed week to not be perfect');
+});
+
+check('a rest day with zero eligible sessions is never a perfect week (avoids a free milestone)', () => {
+  const allRest: ScheduledDay[] = mwfSchedule.map(d => ({ ...d, kind: 'rest' as const }));
+  const week = calculateCurrentWeekCompletion(allRest, [], NOW);
+  assert(!isPerfectWeek(week), 'expected due=0 week to never count as perfect');
+});
+
+check('an extra/unplanned workout completed on a rest day is surfaced as its own status, not silently "rest"', () => {
+  const monday = mondayWeeksAgo(0);
+  const tuesday = dateKeyFor(monday, 1); // Tuesday is a rest day in mwfSchedule
+  // Also complete Monday (a real scheduled day) so the only thing under test — Tuesday's status —
+  // isn't muddied by an unrelated, legitimately-missed Monday.
+  const s = [session(dateKeyFor(monday, 0)), session(tuesday)];
+  const now = new Date(tuesday + 'T18:00:00');
+  const weekly = buildWeeklyProgress(mwfSchedule, s, now);
+  const tuesdayDay = weekly.days.find(day => day.date === tuesday);
+  assert(tuesdayDay?.status === 'extra', `expected Tuesday status 'extra', got '${tuesdayDay?.status}'`);
+  assert(!weekly.days.some(day => day.status === 'missed'), 'an extra session must not create a missed day elsewhere');
+  const streak = calculatePlanStreak(mwfSchedule, s, now);
+  assert(streak === 1, `expected only Monday's linked scheduled completion to count (1), the extra Tuesday session must not add to it, got ${streak}`);
 });
 
 console.log(`verify-streaks: ${checks} checks passed.`);

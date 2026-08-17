@@ -1,12 +1,9 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { Picker } from '@react-native-picker/picker';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
-  KeyboardAvoidingView,
-  Modal,
+  Animated,
   PanResponder,
-  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -17,6 +14,7 @@ import {
 } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Card, PrimaryButton } from '@/components/sprint-ui';
+import { useAutoAdvance } from '@/components/onboarding';
 import { Palette, useTheme } from '@/constants/sprintlab';
 import type {
   ReadinessDecision,
@@ -43,7 +41,59 @@ import {
 } from '@/utils/storage';
 import { completeStep, error, selection, success, tap, warning } from '@/utils/haptics';
 
-type CheckInStage = 1 | 2 | 3 | 4;
+// SprintLab Readiness Check-in V2: same underlying questions, answer types, conditional branches,
+// scoring (utils/readiness.ts's evaluateReadiness — untouched), storage, and workout-launch
+// integration as before — only the presentation changed, from three large multi-question pages
+// to one question at a time. `READINESS_STEP_ID`s below are a presentation-layer sequencing
+// concept only; the persisted ReadinessDecision shape is identical to before.
+
+type ReadinessStepId =
+  | 'sleep-duration' | 'sleep-quality' | 'leg-readiness' | 'focus' | 'food-status' | 'hydration' | 'soreness'
+  | 'localized-issue' | 'symptom-location' | 'symptom-sensation' | 'symptom-movement' | 'symptom-note'
+  | 'result';
+
+const BASE_SEQUENCE: ReadinessStepId[] = [
+  'sleep-duration', 'sleep-quality', 'leg-readiness', 'focus', 'food-status', 'hydration', 'soreness', 'localized-issue',
+];
+const SYMPTOM_SEQUENCE: ReadinessStepId[] = ['symptom-location', 'symptom-sensation', 'symptom-movement', 'symptom-note'];
+
+/** The one place that decides which questions exist right now — conditional branches (currently
+ * just the localized-issue follow-ups) simply extend this array, and the progress header/back
+ * navigation both derive from it, so a changed total is always the real total. */
+function buildSequence(hasLocalizedIssue: boolean | null): ReadinessStepId[] {
+  return hasLocalizedIssue === true ? [...BASE_SEQUENCE, ...SYMPTOM_SEQUENCE, 'result'] : [...BASE_SEQUENCE, 'result'];
+}
+
+/**
+ * Semantic meaning of a readiness answer — deliberately separate from its numeric value or scale
+ * direction, since "higher" means opposite things for e.g. sleep quality (better) vs. soreness
+ * (worse). Each question site decides what its own answers mean; the shared question components
+ * below only ever translate an already-decided semantic into a restrained color treatment.
+ */
+type AnswerSemantic = 'positive' | 'caution' | 'negative' | 'neutral';
+
+/** Restrained selected-state tint per semantic — reuses this same file's existing result-card
+ * background tokens (see resultColor/resultBackground below) rather than inventing new ones, so
+ * an answer's color and the eventual green/yellow/red result read as the same visual language.
+ * Returns null for 'neutral'/undefined, which keeps today's plain accent "selected" treatment. */
+function semanticTint(palette: Palette, semantic?: AnswerSemantic): { color: string; background: string } | null {
+  if (semantic === 'positive') return { color: palette.success, background: '#162000' };
+  if (semantic === 'caution') return { color: palette.orange, background: '#2A1B0C' };
+  if (semantic === 'negative') return { color: palette.red, background: '#2A1216' };
+  return null;
+}
+
+/** Maps a 1-5 scale answer to a semantic tier. `direction` says which end of the scale is
+ * favorable — 'higher-better' for sleep quality/leg readiness/focus, 'higher-worse' for soreness
+ * — so the same four-tier gradient (positive/neutral/caution/negative) works for both without the
+ * caller doing any inversion math itself. */
+function scaleSemantic(value: number, direction: 'higher-better' | 'higher-worse' = 'higher-better'): AnswerSemantic {
+  const normalized = direction === 'higher-better' ? value : 6 - value; // 1 (worst) .. 5 (best)
+  if (normalized >= 4) return 'positive';
+  if (normalized === 3) return 'neutral';
+  if (normalized === 2) return 'caution';
+  return 'negative';
+}
 
 const dateKey = () => new Date().toLocaleDateString('en-CA');
 const average = (values: number[]) => values.length
@@ -63,123 +113,339 @@ const baselineFromLogs = (logs: TrainingLog[]): ReadinessBaseline => {
   };
 };
 
-function CompactScale({
-  value,
-  left,
-  right,
-  onChange,
+/** Shared shell for every single-question screen: eyebrow/title header, close-or-back, Skip, and
+ * a thin "N of M" fill bar sized off the CURRENT (possibly conditional) sequence. */
+function QuestionShell({
+  onBack,
+  onSkip,
+  index,
+  total,
+  children,
 }: {
+  onBack: () => void;
+  onSkip: () => void;
+  index: number;
+  total: number;
+  children: React.ReactNode;
+}) {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
+  const fill = useRef(new Animated.Value(0)).current;
+  useMemo(() => {
+    Animated.timing(fill, { toValue: total > 0 ? (index + 1) / total : 0, duration: 260, useNativeDriver: false }).start();
+    return null;
+  }, [fill, index, total]);
+  return (
+    <SafeAreaView style={styles.safe}>
+      <View style={styles.shell}>
+        <View style={styles.header}>
+          <Pressable accessibilityRole="button" accessibilityLabel={index === 0 ? 'Close readiness check-in' : 'Go to previous question'} onPress={() => { tap(); onBack(); }} style={styles.back}>
+            <MaterialIcons name={index === 0 ? 'close' : 'arrow-back'} size={22} color={palette.text} />
+          </Pressable>
+          <View style={styles.headerCopy}>
+            <Text style={styles.eyebrow}>BEFORE TRAINING</Text>
+            <Text style={styles.headerTitle}>Readiness check-in</Text>
+          </View>
+          <Pressable accessibilityRole="button" onPress={() => { tap(); onSkip(); }} style={styles.skipTop}>
+            <Text style={styles.skipTopText}>Skip</Text>
+          </Pressable>
+        </View>
+        <View style={styles.progressRow}>
+          <Text style={styles.progressLabel}>{Math.min(index + 1, total)} of {total}</Text>
+          <View style={styles.progressTrack}>
+            <Animated.View style={[styles.progressFill, { width: fill.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) }]} />
+          </View>
+        </View>
+        <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          {children}
+        </ScrollView>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+/** Large, highly tappable 1-5 scale — every existing scale question (sleep quality, leg
+ * readiness, focus, soreness) uses this. Tapping selects and auto-advances shortly after. */
+function ScaleQuestion({ title, subtitle, value, left, right, onAnswer, direction = 'higher-better' }: {
+  title: string;
+  subtitle: string;
   value: number;
   left: string;
   right: string;
-  onChange: (value: number) => void;
+  onAnswer: (value: number) => void;
+  /** Which end of 1-5 is favorable — see scaleSemantic. Defaults to "higher is better", which
+   * covers every existing scale question except soreness. */
+  direction?: 'higher-better' | 'higher-worse';
 }) {
   const palette = useTheme();
   const styles = useMemo(() => createStyles(palette), [palette]);
-  return (
-    <View>
-      <View style={styles.scale}>
-        {Array.from({ length: 5 }, (_, index) => index + 1).map(number => {
-          const selected = value === number;
-          return (
-            <Pressable
-              key={number}
-              accessibilityRole="radio"
-              accessibilityState={{ selected }}
-              accessibilityLabel={`${number} out of 5`}
-              onPress={() => {
-                if (value !== number) selection();
-                onChange(number);
-              }}
-              style={[styles.scaleItem, selected && styles.scaleActive]}>
-              <Text style={[styles.scaleText, selected && styles.scaleTextActive]}>{number}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
-      <View style={styles.scaleEndpoints}>
-        <Text style={styles.endpoint}>{left}</Text>
-        <Text style={styles.endpoint}>{right}</Text>
-      </View>
+  const { schedule, pending } = useAutoAdvance();
+  const [justSelected, setJustSelected] = useState(value > 0 ? value : 0);
+  const choose = (next: number) => {
+    setJustSelected(next);
+    selection();
+    schedule(() => onAnswer(next));
+  };
+  return <View style={styles.questionBlock}>
+    <Text style={styles.questionTitle}>{title}</Text>
+    <Text style={styles.questionSubtitle}>{subtitle}</Text>
+    <View style={styles.scaleRow}>
+      {[1, 2, 3, 4, 5].map(number => {
+        const selected = justSelected === number;
+        const tint = selected ? semanticTint(palette, scaleSemantic(number, direction)) : null;
+        return <Pressable
+          key={number}
+          accessibilityRole="radio"
+          accessibilityState={{ selected }}
+          accessibilityLabel={`${number} out of 5`}
+          disabled={pending && !selected}
+          onPress={() => choose(number)}
+          style={[
+            styles.scaleCell,
+            selected && (tint ? { borderColor: tint.color, backgroundColor: tint.background } : styles.scaleCellActive),
+            pending && !selected && styles.dimmed,
+          ]}
+        >
+          <Text style={[styles.scaleCellText, selected && (tint ? { color: tint.color } : styles.scaleCellTextActive)]}>{number}</Text>
+        </Pressable>;
+      })}
     </View>
-  );
+    <View style={styles.scaleEndpoints}>
+      <Text style={styles.endpoint}>{left}</Text>
+      <Text style={styles.endpoint}>{right}</Text>
+    </View>
+  </View>;
 }
 
-function Choice<T extends string | boolean>({
-  value,
-  options,
-  onChange,
-  compact = false,
-  dense = false,
-  feedback,
-}: {
+/** Categorical single-choice — food status, hydration, localized-issue yes/no, symptom sensation,
+ * and (for non-"other" picks) symptom location all use this. Auto-advances on tap. */
+function CategoricalQuestion<T extends string | boolean>({ title, subtitle, value, options, onAnswer, warnOn }: {
+  title: string;
+  subtitle?: string;
   value: T | null | undefined;
-  options: { value: T; label: string; detail?: string }[];
-  onChange: (value: T) => void;
-  compact?: boolean;
-  dense?: boolean;
-  feedback?: (value: T) => void;
+  options: { value: T; label: string; detail?: string; semantic?: AnswerSemantic }[];
+  onAnswer: (value: T) => void;
+  warnOn?: T;
 }) {
   const palette = useTheme();
   const styles = useMemo(() => createStyles(palette), [palette]);
-  return (
-    <View style={[styles.choiceList, compact && styles.choiceListHorizontal]}>
+  const { schedule, pending } = useAutoAdvance();
+  const [justSelected, setJustSelected] = useState<T | null>(value ?? null);
+  const choose = (next: T) => {
+    setJustSelected(next);
+    if (warnOn !== undefined && next === warnOn) warning();
+    else selection();
+    schedule(() => onAnswer(next));
+  };
+  return <View style={styles.questionBlock}>
+    <Text style={styles.questionTitle}>{title}</Text>
+    {subtitle ? <Text style={styles.questionSubtitle}>{subtitle}</Text> : null}
+    <View style={styles.choiceStack}>
       {options.map(option => {
-        const selected = value === option.value;
-        return (
-          <Pressable
-            key={String(option.value)}
-            accessibilityRole="radio"
-            accessibilityState={{ selected }}
-            onPress={() => {
-              if (!selected) {
-                if (feedback) feedback(option.value);
-                else selection();
-              }
-              onChange(option.value);
-            }}
-            style={[styles.choice, dense && styles.choiceDense, compact && styles.choiceCompact, selected && styles.choiceSelected]}>
-            <View style={[styles.choiceDot, selected && styles.choiceDotSelected]}>
-              {selected ? <View style={styles.choiceDotCenter} /> : null}
-            </View>
-            <View style={styles.choiceContent}>
-              <Text style={[styles.choiceLabel, selected && styles.choiceLabelSelected]}>{option.label}</Text>
-              {option.detail ? <Text style={styles.choiceDetail}>{option.detail}</Text> : null}
-            </View>
-          </Pressable>
-        );
+        const selected = justSelected === option.value;
+        const tint = selected ? semanticTint(palette, option.semantic) : null;
+        return <Pressable
+          key={String(option.value)}
+          accessibilityRole="radio"
+          accessibilityState={{ selected }}
+          disabled={pending && !selected}
+          onPress={() => choose(option.value)}
+          style={[
+            styles.choiceCard,
+            selected && (tint ? { borderColor: tint.color, backgroundColor: tint.background } : styles.choiceCardActive),
+            pending && !selected && styles.dimmed,
+          ]}
+        >
+          <View style={styles.choiceContent}>
+            <Text style={[styles.choiceLabel, selected && (tint ? { color: tint.color } : styles.choiceLabelActive)]}>{option.label}</Text>
+            {option.detail ? <Text style={styles.choiceDetail}>{option.detail}</Text> : null}
+          </View>
+          <View style={[styles.choiceDot, selected && (tint ? { borderColor: tint.color } : styles.choiceDotActive)]}>{selected ? <View style={[styles.choiceDotCenter, tint && { backgroundColor: tint.color }]} /> : null}</View>
+        </Pressable>;
       })}
     </View>
-  );
+  </View>;
 }
 
-function StageProgress({ stage }: { stage: CheckInStage }) {
+const SLEEP_MIN = 0;
+const SLEEP_MAX = 14;
+const SLEEP_STEP = 0.25;
+const SLEEP_TICKS = [4, 6, 8, 10, 12];
+
+/** Replaces the old bottom-sheet hour/minute wheel pickers with a single fast horizontal control:
+ * a draggable track (matching this file's existing PanResponder use for the old symptom sheet)
+ * plus +/- 15-minute steppers as a reliable fallback. Same 0-14h range and 15-minute precision
+ * the old picker offered — evaluateReadiness needs nothing finer.
+ *
+ * The track position is driven by a single Animated.Value (0-1 ratio along the track) rather than
+ * a plain style string, which is what makes three things possible at once: (1) 1:1 finger tracking
+ * while actively dragging — no lag, so the visually centered value never drifts from the value
+ * about to be committed; (2) a native-feeling momentum flick on release, via Animated.decay seeded
+ * from the gesture's release velocity; and (3) a guaranteed final snap to a valid SLEEP_STEP with
+ * no overshoot/bounce (Animated.timing, not spring) — the decay is watched by a listener that stops
+ * it the instant it would leave the [0,1] track bounds, and every release path (flick, slow drag,
+ * or a tap) funnels through the same snapToStep so the resting thumb position and the committed
+ * value are always identical. */
+function SleepDurationQuestion({
+  value,
+  unusualConfirmed,
+  onChange,
+  onConfirmUnusual,
+  onContinue,
+}: {
+  value: number;
+  unusualConfirmed: boolean;
+  onChange: (value: number) => void;
+  onConfirmUnusual: () => void;
+  onContinue: () => void;
+}) {
   const palette = useTheme();
   const styles = useMemo(() => createStyles(palette), [palette]);
-  const items = [
-    { number: 1, label: 'Recovery' },
-    { number: 2, label: 'Fuel' },
-    { number: 3, label: 'Body' },
-  ];
-  return (
-    <View style={styles.progressWrap}>
-      {items.map((item, index) => {
-        const active = stage === item.number;
-        const complete = stage > item.number;
-        return (
-          <View key={item.number} style={styles.progressItem}>
-            <View style={[styles.progressDot, (active || complete) && styles.progressDotActive]}>
-              {complete
-                ? <MaterialIcons name="check" size={13} color="#081000" />
-                : <Text style={[styles.progressNumber, active && styles.progressNumberActive]}>{item.number}</Text>}
-            </View>
-            <Text style={[styles.progressLabel, (active || complete) && styles.progressLabelActive]}>{item.label}</Text>
-            {index < items.length - 1 ? <View style={[styles.progressLine, complete && styles.progressLineActive]} /> : null}
-          </View>
-        );
-      })}
+  const trackWidth = useRef(0);
+  const trackX = useRef(0);
+  const isDragging = useRef(false);
+  const lastQuantized = useRef(value);
+  const currentRatio = useRef(0);
+  const animatedRatio = useRef(new Animated.Value(0)).current;
+  // The PanResponder below is created once (see the empty-ish dep array on its useMemo) so a
+  // fast-moving gesture never gets recreated mid-drag — it reads onChange through this ref rather
+  // than closing over the prop directly, so it always calls the CURRENT onChange even though the
+  // responder object itself never changes identity.
+  const onChangeRef = useRef(onChange);
+  useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
+
+  const clampValue = (raw: number) => Math.round(Math.min(SLEEP_MAX, Math.max(SLEEP_MIN, raw)) / SLEEP_STEP) * SLEEP_STEP;
+  const ratioFromValue = (raw: number) => Math.min(1, Math.max(0, (raw - SLEEP_MIN) / (SLEEP_MAX - SLEEP_MIN)));
+  const valueFromRatio = (ratio: number) => clampValue(SLEEP_MIN + Math.min(1, Math.max(0, ratio)) * (SLEEP_MAX - SLEEP_MIN));
+  const ratioFromPageX = (pageX: number) => {
+    if (trackWidth.current <= 0) return currentRatio.current;
+    return Math.min(1, Math.max(0, (pageX - trackX.current) / trackWidth.current));
+  };
+
+  // Keeps the thumb honest whenever the value changes from OUTSIDE a drag (the +/- steppers, or
+  // the screen loading a previously-saved answer) — never fires mid-gesture, so it can't fight
+  // the athlete's finger. Also resyncs lastQuantized so a subsequent drag's first commit() compares
+  // against the real current value rather than whatever it was quantized to on mount.
+  useEffect(() => {
+    lastQuantized.current = value;
+    if (isDragging.current) return;
+    Animated.timing(animatedRatio, { toValue: ratioFromValue(value >= 0 ? value : 8), duration: 180, useNativeDriver: false }).start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  useEffect(() => {
+    const id = animatedRatio.addListener(({ value: v }) => { currentRatio.current = v; });
+    return () => animatedRatio.removeListener(id);
+  }, [animatedRatio]);
+
+  const commit = (next: number, tick = true) => {
+    if (next !== lastQuantized.current) {
+      lastQuantized.current = next;
+      if (tick) selection();
+      onChangeRef.current(next);
+    }
+  };
+
+  const snapToStep = () => {
+    const snapped = valueFromRatio(currentRatio.current);
+    Animated.timing(animatedRatio, { toValue: ratioFromValue(snapped), duration: 140, useNativeDriver: false }).start();
+    commit(snapped);
+  };
+
+  const panResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: () => {
+      isDragging.current = true;
+      animatedRatio.stopAnimation();
+    },
+    onPanResponderMove: (_, gesture) => {
+      const ratio = ratioFromPageX(gesture.moveX);
+      animatedRatio.setValue(ratio);
+      commit(valueFromRatio(ratio));
+    },
+    onPanResponderRelease: (_, gesture) => {
+      isDragging.current = false;
+      const FLICK_THRESHOLD = 0.35; // px/ms — below this, treat it as a deliberate slow drag, not a flick
+      if (trackWidth.current > 0 && Math.abs(gesture.vx) > FLICK_THRESHOLD) {
+        const decayVelocity = gesture.vx / trackWidth.current;
+        const listenerId = animatedRatio.addListener(({ value: v }) => {
+          if (v <= 0 || v >= 1) {
+            animatedRatio.stopAnimation(() => { animatedRatio.removeListener(listenerId); snapToStep(); });
+          }
+        });
+        Animated.decay(animatedRatio, { velocity: decayVelocity, deceleration: 0.996, useNativeDriver: false }).start(() => {
+          animatedRatio.removeListener(listenerId);
+          snapToStep();
+        });
+      } else {
+        snapToStep();
+      }
+    },
+    onPanResponderTerminate: () => {
+      isDragging.current = false;
+      snapToStep();
+    },
+    // commit/snapToStep/valueFromRatio/ratioFromPageX are intentionally omitted: none of them
+    // close over `value` or `onChange` directly (onChange goes through onChangeRef, "current
+    // value" through lastQuantized/currentRatio refs) — creating the responder once here, rather
+    // than on every render, is what keeps a fast drag from ever being interrupted mid-gesture by
+    // React re-running PanResponder.create.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [animatedRatio]);
+
+  const hasValue = value >= 0;
+  const displayValue = hasValue ? value : 8;
+  const hours = Math.floor(displayValue);
+  const minutes = Math.round((displayValue % 1) * 60);
+  const unusual = hasValue && (value < 4 || value > 12);
+  const step = (delta: number) => {
+    selection();
+    const next = clampValue((hasValue ? value : 8) + delta);
+    lastQuantized.current = next;
+    onChange(next);
+  };
+  const fillWidth = animatedRatio.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
+  const thumbLeft = animatedRatio.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
+
+  return <View style={styles.questionBlock}>
+    <Text style={styles.questionTitle}>How long did you sleep last night?</Text>
+    <Text style={styles.questionSubtitle}>Your sleep fuels your performance.</Text>
+
+    <View style={styles.sleepValueRow}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Subtract 15 minutes" onPress={() => step(-SLEEP_STEP)} style={styles.sleepStepper}>
+        <MaterialIcons name="remove" size={22} color={palette.text} />
+      </Pressable>
+      <View style={styles.sleepReadout}>
+        <Text style={styles.sleepReadoutValue}>{hasValue ? `${hours}h${minutes ? ` ${minutes}m` : ''}` : 'Select'}</Text>
+      </View>
+      <Pressable accessibilityRole="button" accessibilityLabel="Add 15 minutes" onPress={() => step(SLEEP_STEP)} style={styles.sleepStepper}>
+        <MaterialIcons name="add" size={22} color={palette.text} />
+      </Pressable>
     </View>
-  );
+
+    <View
+      style={styles.sleepTrackWrap}
+      onLayout={event => { trackWidth.current = event.nativeEvent.layout.width; }}
+      onTouchStart={event => { trackX.current = event.nativeEvent.pageX - (event.nativeEvent.locationX); }}
+      {...panResponder.panHandlers}
+    >
+      <View style={styles.sleepTrack}>
+        <Animated.View style={[styles.sleepTrackFill, { width: fillWidth }]} />
+        <Animated.View style={[styles.sleepThumb, { left: thumbLeft }]} hitSlop={16} />
+      </View>
+      <View style={styles.sleepTicks}>
+        {SLEEP_TICKS.map(tick => <Text key={tick} style={styles.sleepTickText}>{tick} hr</Text>)}
+      </View>
+    </View>
+
+    {unusual ? <Pressable onPress={() => { selection(); onConfirmUnusual(); }} style={[styles.unusualRow, unusualConfirmed && styles.unusualRowConfirmed]}>
+      <MaterialIcons name={unusualConfirmed ? 'check-circle' : 'error-outline'} size={19} color={unusualConfirmed ? palette.accent : palette.orange} />
+      <Text style={styles.unusualText}>{unusualConfirmed ? 'Confirmed' : 'That’s an unusual duration. Tap to confirm it’s correct.'}</Text>
+    </Pressable> : null}
+
+    <PrimaryButton title="Next" onPress={onContinue} disabled={!hasValue || (unusual && !unusualConfirmed)} />
+  </View>;
 }
 
 export default function ReadinessScreen() {
@@ -187,10 +453,9 @@ export default function ReadinessScreen() {
   const palette = useTheme();
   const styles = useMemo(() => createStyles(palette), [palette]);
   const { launch } = useLocalSearchParams<{ launch?: string }>();
-  const [stage, setStage] = useState<CheckInStage>(1);
+  const [currentStepId, setCurrentStepId] = useState<ReadinessStepId>('sleep-duration');
   const [sleepHours, setSleepHours] = useState(-1);
   const [sleepMinutes, setSleepMinutes] = useState(0);
-  const [sleepPickerOpen, setSleepPickerOpen] = useState(false);
   const [unusualSleepConfirmed, setUnusualSleepConfirmed] = useState(false);
   const [sleepQuality, setSleepQuality] = useState(0);
   const [legReadiness, setLegReadiness] = useState(0);
@@ -199,7 +464,6 @@ export default function ReadinessScreen() {
   const [hydrated, setHydrated] = useState<boolean | null>(null);
   const [soreness, setSoreness] = useState(0);
   const [hasLocalizedIssue, setHasLocalizedIssue] = useState<boolean | null>(null);
-  const [symptomSheetOpen, setSymptomSheetOpen] = useState(false);
   const [sensation, setSensation] = useState<ReadinessSensation>();
   const [location, setLocation] = useState<ReadinessLocation>();
   const [otherLocationDetail, setOtherLocationDetail] = useState('');
@@ -207,12 +471,6 @@ export default function ReadinessScreen() {
   const [painNotes, setPainNotes] = useState('');
   const [warmupReassessment, setWarmupReassessment] = useState<WarmupReassessment>();
   const [baseline, setBaseline] = useState<ReadinessBaseline>({ sampleCount: 0 });
-  const symptomScrollRef = useRef<ScrollView>(null);
-  const symptomFieldOffsets = useRef<Record<'location' | 'sensation' | 'movement', number>>({
-    location: 0,
-    sensation: 0,
-    movement: 0,
-  });
 
   useFocusEffect(useCallback(() => {
     Promise.all([getReadiness(dateKey()), getTrainingLogs()]).then(([value, logs]) => {
@@ -241,16 +499,10 @@ export default function ReadinessScreen() {
 
   const sleepNumber = sleepHours >= 0 ? sleepHours + sleepMinutes / 60 : -1;
   const unusualSleep = sleepNumber >= 0 && (sleepNumber < 4 || sleepNumber > 12);
-  const sleepLabel = sleepHours < 0
-    ? 'Select'
-    : `${sleepHours} hr${sleepHours === 1 ? '' : 's'}${sleepMinutes ? ` ${sleepMinutes} min` : ''}`;
   const locationComplete = Boolean(location) && (location !== 'other' || Boolean(otherLocationDetail.trim()));
   const symptomComplete = hasLocalizedIssue === false
     || (hasLocalizedIssue === true && Boolean(sensation) && locationComplete && hesitatesAtMaxEffort !== null);
-  const recoveryComplete = sleepNumber >= 0 && sleepNumber <= 14
-    && (!unusualSleep || unusualSleepConfirmed)
-    && sleepQuality > 0
-    && legReadiness > 0;
+  const recoveryComplete = sleepNumber >= 0 && sleepNumber <= 14 && (!unusualSleep || unusualSleepConfirmed) && sleepQuality > 0 && legReadiness > 0;
   const fuelComplete = focus > 0 && Boolean(foodStatus) && hydrated !== null;
   const bodyComplete = soreness > 0 && hasLocalizedIssue !== null && symptomComplete;
   const valid = recoveryComplete && fuelComplete && bodyComplete;
@@ -275,24 +527,24 @@ export default function ReadinessScreen() {
     warmupReassessment,
     painNotes: hasLocalizedIssue ? painNotes : '',
   } : null, [
-    valid,
-    sleepNumber,
-    sleepQuality,
-    neuralReadiness,
-    focus,
-    foodStatus,
-    hydrated,
-    soreness,
-    hasLocalizedIssue,
-    sensation,
-    location,
-    otherLocationDetail,
-    hesitatesAtMaxEffort,
-    warmupReassessment,
-    painNotes,
+    valid, sleepNumber, sleepQuality, neuralReadiness, focus, foodStatus, hydrated, soreness,
+    hasLocalizedIssue, sensation, location, otherLocationDetail, hesitatesAtMaxEffort, warmupReassessment, painNotes,
   ]);
 
   const evaluation = useMemo(() => draft ? evaluateReadiness(draft, baseline) : null, [draft, baseline]);
+
+  const sequence = useMemo(() => buildSequence(hasLocalizedIssue), [hasLocalizedIssue]);
+  const currentIndex = Math.max(0, sequence.indexOf(currentStepId));
+  const questionCount = sequence.length - 1; // exclude 'result' from the visible "N of M"
+
+  const goNext = () => {
+    const next = sequence[currentIndex + 1];
+    if (next) setCurrentStepId(next);
+  };
+  const goBack = () => {
+    if (currentIndex === 0) { router.back(); return; }
+    setCurrentStepId(sequence[currentIndex - 1]);
+  };
 
   const finishCheckIn = async (decision: ReadinessDecision) => {
     try {
@@ -374,231 +626,25 @@ export default function ReadinessScreen() {
     setWarmupReassessment(undefined);
   };
 
-  const dismissSymptomSheet = () => {
-    tap();
-    setSymptomSheetOpen(false);
-  };
-  const saveSymptomSheet = () => {
-    const missing = !locationComplete
-      ? { field: 'location' as const, label: location === 'other' ? 'Add the specific body area.' : 'Choose the body area.' }
-      : !sensation
-        ? { field: 'sensation' as const, label: 'Choose how you would describe it.' }
-        : hesitatesAtMaxEffort === null
-          ? { field: 'movement' as const, label: 'Choose whether it affects normal movement.' }
-          : null;
-    if (missing) {
-      error();
-      Alert.alert('One detail is missing', missing.label);
-      symptomScrollRef.current?.scrollTo({
-        y: Math.max(0, symptomFieldOffsets.current[missing.field] - 12),
-        animated: true,
-      });
-      return;
-    }
-    warning();
-    setSymptomSheetOpen(false);
-  };
-  const symptomSheetPanResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_, gesture) => gesture.dy > 8 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
-    onPanResponderRelease: (_, gesture) => {
-      if (gesture.dy > 55 || gesture.vy > 0.8) setSymptomSheetOpen(false);
-    },
-  }), []);
+  const resultColor = evaluation?.level === 'green' ? palette.accent : evaluation?.level === 'yellow' ? palette.orange : palette.red;
+  const resultBackground = evaluation?.level === 'green' ? '#162000' : evaluation?.level === 'yellow' ? '#2A1B0C' : '#2A1216';
 
-  const moveForward = () => {
-    if (stage === 1 && recoveryComplete) {
-      completeStep();
-      setStage(2);
-    } else if (stage === 2 && fuelComplete) {
-      completeStep();
-      setStage(3);
-    } else if (stage === 3 && bodyComplete) {
-      if (evaluation?.level === 'yellow' || evaluation?.level === 'red') warning();
-      else completeStep();
-      setStage(4);
-    } else {
-      error();
-    }
-  };
-
-  const resultColor = evaluation?.level === 'green'
-    ? palette.accent
-    : evaluation?.level === 'yellow'
-      ? palette.orange
-      : palette.red;
-  const resultBackground = evaluation?.level === 'green'
-    ? '#162000'
-    : evaluation?.level === 'yellow'
-      ? '#2A1B0C'
-      : '#2A1216';
-
-  return (
-    <SafeAreaView style={styles.safe}>
-      <View style={styles.shell}>
-        <View style={styles.header}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={stage === 1 ? 'Close readiness check-in' : 'Go to previous step'}
-            onPress={() => {
-              tap();
-              if (stage === 1) router.back();
-              else setStage(previous => Math.max(1, previous - 1) as CheckInStage);
-            }}
-            style={styles.back}>
-            <MaterialIcons name={stage === 1 ? 'close' : 'arrow-back'} size={22} color={palette.text} />
-          </Pressable>
-          <View style={styles.headerCopy}>
-            <Text style={styles.eyebrow}>BEFORE TRAINING</Text>
-            <Text style={styles.headerTitle}>Readiness check-in</Text>
+  if (currentStepId === 'result') {
+    if (!evaluation) { setCurrentStepId('sleep-duration'); return null; }
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.shell}>
+          <View style={styles.header}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close readiness check-in" onPress={() => { tap(); router.back(); }} style={styles.back}>
+              <MaterialIcons name="close" size={22} color={palette.text} />
+            </Pressable>
+            <View style={styles.headerCopy}>
+              <Text style={styles.eyebrow}>BEFORE TRAINING</Text>
+              <Text style={styles.headerTitle}>Readiness check-in</Text>
+            </View>
+            <View style={styles.skipTop} />
           </View>
-          <Pressable accessibilityRole="button" onPress={() => { tap(); skip(); }} style={styles.skipTop}>
-            <Text style={styles.skipTopText}>Skip</Text>
-          </Pressable>
-        </View>
-
-        {stage < 4 ? <StageProgress stage={stage} /> : null}
-
-        <ScrollView
-          contentContainerStyle={styles.page}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}>
-          {stage === 1 ? (
-            <View style={styles.stage}>
-              <View>
-                <Text style={styles.stageTitle}>Recovery</Text>
-                <Text style={styles.stageCopy}>A quick check of sleep and how ready your legs feel.</Text>
-              </View>
-
-              <View style={styles.questionGroup}>
-                <Text style={styles.questionLabel}>Sleep duration</Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Sleep duration, ${sleepLabel}`}
-                  onPress={() => { tap(); setSleepPickerOpen(true); }}
-                  style={styles.valueRow}>
-                  <View style={styles.valueIcon}><MaterialIcons name="bedtime" size={20} color={palette.accent} /></View>
-                  <Text style={styles.valueRowLabel}>Sleep duration</Text>
-                  <Text style={[styles.valueRowValue, sleepHours < 0 && styles.valuePlaceholder]}>{sleepLabel}</Text>
-                  <MaterialIcons name="chevron-right" size={22} color={palette.muted} />
-                </Pressable>
-                {unusualSleep ? (
-                  <Pressable
-                    onPress={() => { selection(); setUnusualSleepConfirmed(value => !value); }}
-                    style={[styles.unusualRow, unusualSleepConfirmed && styles.unusualRowConfirmed]}>
-                    <MaterialIcons
-                      name={unusualSleepConfirmed ? 'check-circle' : 'error-outline'}
-                      size={19}
-                      color={unusualSleepConfirmed ? palette.accent : palette.orange}
-                    />
-                    <Text style={styles.unusualText}>
-                      {unusualSleepConfirmed ? `${sleepLabel} confirmed` : `${sleepLabel} is unusual. Tap to confirm it is correct.`}
-                    </Text>
-                  </Pressable>
-                ) : null}
-                {baseline.sampleCount >= 3 && baseline.averageSleep !== undefined ? (
-                  <Text style={styles.baselineText}>Recent average: {baseline.averageSleep.toFixed(1)} hours</Text>
-                ) : null}
-              </View>
-
-              <View style={styles.questionGroup}>
-                <Text style={styles.questionLabel}>Sleep quality</Text>
-                <CompactScale value={sleepQuality} left="Poor" right="Great" onChange={setSleepQuality} />
-              </View>
-
-              <View style={styles.questionGroup}>
-                <Text style={styles.questionLabel}>How ready do your legs feel?</Text>
-                <CompactScale value={legReadiness} left="Heavy" right="Springy" onChange={setLegReadiness} />
-              </View>
-            </View>
-          ) : null}
-
-          {stage === 2 ? (
-            <View style={styles.stage}>
-              <View>
-                <Text style={styles.stageTitle}>Fuel and focus</Text>
-                <Text style={styles.stageCopy}>Compare today with what is normal for you at this time of day.</Text>
-              </View>
-
-              <View style={styles.questionGroup}>
-                <Text style={styles.questionLabel}>Mental focus</Text>
-                <CompactScale value={focus} left="Distracted" right="Locked in" onChange={setFocus} />
-              </View>
-
-              <View style={styles.questionGroup}>
-                <Text style={styles.questionLabel}>Food today</Text>
-                <Choice
-                  value={foodStatus}
-                  onChange={setFoodStatus}
-                  options={[
-                    { value: 'normal', label: 'Eating normally' },
-                    { value: 'fasted-usual', label: 'Training fasted as usual' },
-                    { value: 'underfueled', label: 'Less food than normal' },
-                  ]}
-                />
-              </View>
-
-              <View style={styles.questionGroup}>
-                <Text style={styles.questionLabel}>Hydration</Text>
-                <Choice
-                  compact
-                  value={hydrated}
-                  onChange={setHydrated}
-                  options={[
-                    { value: true, label: 'About normal' },
-                    { value: false, label: 'Less than normal' },
-                  ]}
-                />
-              </View>
-            </View>
-          ) : null}
-
-          {stage === 3 ? (
-            <View style={styles.stage}>
-              <View>
-                <Text style={styles.stageTitle}>Body status</Text>
-                <Text style={styles.stageCopy}>Record general soreness and anything localized before training.</Text>
-              </View>
-
-              <View style={styles.questionGroup}>
-                <Text style={styles.questionLabel}>General training soreness</Text>
-                <CompactScale value={soreness} left="None" right="Severe" onChange={setSoreness} />
-              </View>
-
-              <View style={styles.questionGroup}>
-                <Text style={styles.questionLabel}>Any localized tightness, pulling, or pain?</Text>
-                <Choice
-                  compact
-                  value={hasLocalizedIssue}
-                  feedback={value => value ? warning() : selection()}
-                  onChange={value => {
-                    setHasLocalizedIssue(value);
-                    if (value) setSymptomSheetOpen(true);
-                    else clearLocalizedIssue();
-                  }}
-                  options={[
-                    { value: false, label: 'No' },
-                    { value: true, label: 'Yes' },
-                  ]}
-                />
-                {hasLocalizedIssue && symptomComplete ? (
-                  <Pressable onPress={() => { tap(); setSymptomSheetOpen(true); }} style={styles.symptomSummary}>
-                    <MaterialIcons name="check-circle" size={19} color={palette.orange} />
-                    <View style={styles.symptomSummaryCopy}>
-                      <Text style={styles.symptomSummaryTitle}>Symptom details recorded</Text>
-                      <Text style={styles.symptomSummaryText}>
-                        {location === 'other' ? otherLocationDetail : location ? locationLabels[location] : ''}
-                        {' · '}
-                        {sensation ? sensationLabels[sensation] : ''}
-                      </Text>
-                    </View>
-                    <Text style={styles.editText}>Edit</Text>
-                  </Pressable>
-                ) : null}
-              </View>
-            </View>
-          ) : null}
-
-          {stage === 4 && evaluation ? (
+          <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             <View style={styles.stage}>
               <View>
                 <Text style={styles.stageTitle}>Today’s readiness</Text>
@@ -626,19 +672,24 @@ export default function ReadinessScreen() {
 
               {evaluation.requiresWarmupReassessment ? (
                 <Card style={styles.reassessment}>
-                  <Text style={styles.questionLabel}>Recheck after your normal warm-up</Text>
+                  <Text style={styles.questionLabelSmall}>Recheck after your normal warm-up</Text>
                   <Text style={styles.reassessmentCopy}>How did the flagged issue or overall readiness change?</Text>
-                  <Choice
-                    compact
-                    value={warmupReassessment}
-                    feedback={value => value === 'worse' ? warning() : selection()}
-                    onChange={setWarmupReassessment}
-                    options={[
-                      { value: 'better', label: 'Better' },
-                      { value: 'same', label: 'Same' },
-                      { value: 'worse', label: 'Worse' },
-                    ]}
-                  />
+                  <View style={styles.choiceStackHorizontal}>
+                    {(['better', 'same', 'worse'] as WarmupReassessment[]).map(option => {
+                      const selected = warmupReassessment === option;
+                      const semantic: AnswerSemantic = option === 'better' ? 'positive' : option === 'worse' ? 'negative' : 'neutral';
+                      const tint = selected ? semanticTint(palette, semantic) : null;
+                      return <Pressable
+                        key={option}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected }}
+                        onPress={() => { if (option === 'worse') warning(); else selection(); setWarmupReassessment(option); }}
+                        style={[styles.choiceChip, selected && (tint ? { borderColor: tint.color, backgroundColor: tint.background } : styles.choiceCardActive)]}
+                      >
+                        <Text style={[styles.choiceLabel, selected && (tint ? { color: tint.color } : styles.choiceLabelActive)]}>{option === 'better' ? 'Better' : option === 'same' ? 'Same' : 'Worse'}</Text>
+                      </Pressable>;
+                    })}
+                  </View>
                 </Card>
               ) : null}
 
@@ -647,266 +698,260 @@ export default function ReadinessScreen() {
                 <Text style={styles.safetyText}>SprintLab can flag concerns, but it cannot diagnose an injury or confirm that training is safe.</Text>
               </View>
 
-              <Pressable onPress={() => { tap(); setStage(1); }} style={styles.editAnswers}>
+              <Pressable onPress={() => { tap(); setCurrentStepId('sleep-duration'); }} style={styles.editAnswers}>
                 <MaterialIcons name="edit" size={17} color={palette.muted} />
                 <Text style={styles.editAnswersText}>Edit answers</Text>
               </Pressable>
             </View>
-          ) : null}
-        </ScrollView>
-
-        <View style={styles.bottomBar}>
-          {stage < 4 ? (
+          </ScrollView>
+          <View style={styles.bottomBar}>
             <PrimaryButton
               title={
-                stage === 1
-                  ? 'Continue to fuel'
-                  : stage === 2
-                    ? 'Continue to body status'
-                    : bodyComplete
-                      ? 'Review today’s readiness'
-                      : 'Complete body status'
-              }
-              onPress={moveForward}
-              disabled={
-                (stage === 1 && !recoveryComplete)
-                || (stage === 2 && !fuelComplete)
-                || (stage === 3 && !bodyComplete)
-              }
-            />
-          ) : (
-            <PrimaryButton
-              title={
-                evaluation?.level === 'red'
+                evaluation.level === 'red'
                   ? 'Return to Today'
-                  : evaluation?.requiresWarmupReassessment && !warmupReassessment
+                  : evaluation.requiresWarmupReassessment && !warmupReassessment
                     ? 'Reassess after warm-up'
                     : launch === 'pending'
                       ? 'Continue to today’s workout'
                       : 'Save readiness'
               }
-              onPress={evaluation?.level === 'red' ? saveAndReturnToToday : save}
-              disabled={!evaluation || (evaluation.requiresWarmupReassessment && !warmupReassessment)}
+              onPress={evaluation.level === 'red' ? saveAndReturnToToday : save}
+              disabled={evaluation.requiresWarmupReassessment && !warmupReassessment}
             />
-          )}
-        </View>
-      </View>
-
-      <Modal visible={sleepPickerOpen} transparent animationType="slide" onRequestClose={() => setSleepPickerOpen(false)}>
-        <Pressable style={styles.modalBackdrop} onPress={() => { tap(); setSleepPickerOpen(false); }}>
-          <Pressable style={styles.sheet} onPress={event => event.stopPropagation()}>
-            <View style={styles.sheetHandle} />
-            <View style={styles.sheetHeader}>
-              <View>
-                <Text style={styles.sheetTitle}>Sleep duration</Text>
-                <Text style={styles.sheetCopy}>Choose your actual sleep time.</Text>
-              </View>
-              <Pressable
-                onPress={() => {
-                  tap();
-                  if (sleepHours < 0) setSleepHours(8);
-                  setSleepPickerOpen(false);
-                }}
-                style={styles.doneButton}>
-                <Text style={styles.doneText}>Done</Text>
-              </Pressable>
-            </View>
-            <View style={styles.durationPickers}>
-              <Picker
-                selectedValue={sleepHours < 0 ? 8 : sleepHours}
-                onValueChange={value => {
-                  if (sleepHours !== Number(value)) selection();
-                  setSleepHours(Number(value));
-                  setUnusualSleepConfirmed(false);
-                }}
-                dropdownIconColor={palette.text}
-                style={styles.picker}>
-                {Array.from({ length: 15 }, (_, hour) => <Picker.Item key={hour} label={`${hour} hr`} value={hour} />)}
-              </Picker>
-              <Picker
-                selectedValue={sleepMinutes}
-                onValueChange={value => {
-                  if (sleepMinutes !== Number(value)) selection();
-                  setSleepMinutes(Number(value));
-                  setUnusualSleepConfirmed(false);
-                }}
-                dropdownIconColor={palette.text}
-                style={styles.picker}>
-                {[0, 15, 30, 45].map(minutes => <Picker.Item key={minutes} label={`${minutes} min`} value={minutes} />)}
-              </Picker>
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      <Modal visible={symptomSheetOpen} transparent animationType="slide" onRequestClose={dismissSymptomSheet}>
-        <KeyboardAvoidingView
-          style={styles.modalBackdrop}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-          <View style={styles.symptomSheet}>
-            <View style={styles.symptomFixedHeader} {...symptomSheetPanResponder.panHandlers}>
-              <View style={styles.sheetHandle} />
-              <View style={styles.sheetHeader}>
-                <View style={styles.sheetHeaderCopy}>
-                  <Text style={styles.sheetTitle}>Localized symptom</Text>
-                  <Text style={styles.sheetCopy}>Record what you notice. This is not a diagnosis.</Text>
-                </View>
-                <Pressable accessibilityRole="button" accessibilityLabel="Close symptom details" onPress={dismissSymptomSheet} style={styles.closeButton}>
-                  <MaterialIcons name="close" size={21} color={palette.text} />
-                </Pressable>
-              </View>
-            </View>
-
-            <ScrollView
-              ref={symptomScrollRef}
-              style={styles.symptomScroll}
-              contentContainerStyle={styles.symptomSheetContent}
-              keyboardShouldPersistTaps="handled">
-              <View
-                style={styles.questionGroup}
-                onLayout={event => { symptomFieldOffsets.current.location = event.nativeEvent.layout.y; }}>
-                <Text style={styles.questionLabel}>Where is it?</Text>
-                <Choice
-                  dense
-                  value={location}
-                  onChange={value => {
-                    setLocation(value);
-                    if (value !== 'other') setOtherLocationDetail('');
-                  }}
-                  options={(Object.entries(locationLabels) as [ReadinessLocation, string][])
-                    .map(([value, label]) => ({ value, label }))}
-                />
-                {location === 'other' ? (
-                  <TextInput
-                    value={otherLocationDetail}
-                    onChangeText={setOtherLocationDetail}
-                    placeholder="Name the specific area"
-                    placeholderTextColor={palette.muted}
-                    style={styles.input}
-                  />
-                ) : null}
-              </View>
-
-              <View
-                style={styles.questionGroup}
-                onLayout={event => { symptomFieldOffsets.current.sensation = event.nativeEvent.layout.y; }}>
-                <Text style={styles.questionLabel}>How would you describe it?</Text>
-                <Choice
-                  dense
-                  value={sensation}
-                  onChange={setSensation}
-                  options={[
-                    { value: 'minor-tightness', label: sensationLabels['minor-tightness'], detail: 'Tight or stiff; may ease during warm-up.' },
-                    { value: 'lingering-niggle', label: sensationLabels['lingering-niggle'], detail: 'Persistent pulling, aching, or discomfort.' },
-                    { value: 'severe-acute', label: sensationLabels['severe-acute'], detail: 'Sharp, sudden, or affecting normal movement.' },
-                  ]}
-                />
-              </View>
-
-              <View
-                style={styles.questionGroup}
-                onLayout={event => { symptomFieldOffsets.current.movement = event.nativeEvent.layout.y; }}>
-                <Text style={styles.questionLabel}>Does it affect normal movement or make you hold back?</Text>
-                <Choice
-                  compact
-                  dense
-                  value={hesitatesAtMaxEffort}
-                  onChange={setHesitatesAtMaxEffort}
-                  options={[
-                    { value: false, label: 'No' },
-                    { value: true, label: 'Yes' },
-                  ]}
-                />
-              </View>
-
-              <View style={styles.questionGroup}>
-                <Text style={styles.questionLabel}>Optional note</Text>
-                <TextInput
-                  value={painNotes}
-                  onChangeText={setPainNotes}
-                  multiline
-                  placeholder="When it began or what you noticed"
-                  placeholderTextColor={palette.muted}
-                  style={[styles.input, styles.notes]}
-                />
-              </View>
-            </ScrollView>
-            <View style={styles.symptomFooter}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ disabled: !symptomComplete }}
-                onPress={saveSymptomSheet}
-                style={[styles.symptomSave, !symptomComplete && styles.symptomSaveDisabled]}>
-                <Text style={[styles.symptomSaveText, !symptomComplete && styles.symptomSaveTextDisabled]}>Save symptom details</Text>
-              </Pressable>
-            </View>
           </View>
-        </KeyboardAvoidingView>
-      </Modal>
-    </SafeAreaView>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const shellProps = { onBack: goBack, onSkip: skip, index: currentIndex, total: questionCount };
+
+  if (currentStepId === 'sleep-duration') return (
+    <QuestionShell key={currentStepId} {...shellProps}>
+      <SleepDurationQuestion
+        value={sleepNumber}
+        unusualConfirmed={unusualSleepConfirmed}
+        onChange={next => { setSleepHours(Math.floor(next)); setSleepMinutes(Math.round((next % 1) * 60)); setUnusualSleepConfirmed(false); }}
+        onConfirmUnusual={() => setUnusualSleepConfirmed(true)}
+        onContinue={() => { completeStep(); goNext(); }}
+      />
+    </QuestionShell>
   );
+
+  if (currentStepId === 'sleep-quality') return (
+    <QuestionShell key={currentStepId} {...shellProps}>
+      <ScaleQuestion title="How was your sleep quality?" subtitle="Rate how rested you feel, not just the hours." value={sleepQuality} left="Poor" right="Great" onAnswer={next => { setSleepQuality(next); goNext(); }} direction="higher-better" />
+    </QuestionShell>
+  );
+
+  if (currentStepId === 'leg-readiness') return (
+    <QuestionShell key={currentStepId} {...shellProps}>
+      <ScaleQuestion title="How ready do your legs feel?" subtitle="A quick daily check to personalize your session." value={legReadiness} left="Heavy" right="Springy" onAnswer={next => { setLegReadiness(next); goNext(); }} direction="higher-better" />
+    </QuestionShell>
+  );
+
+  if (currentStepId === 'focus') return (
+    <QuestionShell key={currentStepId} {...shellProps}>
+      <ScaleQuestion title="How’s your mental focus?" subtitle="Compare today with what’s normal for you." value={focus} left="Distracted" right="Locked in" onAnswer={next => { setFocus(next); goNext(); }} direction="higher-better" />
+    </QuestionShell>
+  );
+
+  if (currentStepId === 'food-status') return (
+    <QuestionShell key={currentStepId} {...shellProps}>
+      <CategoricalQuestion
+        title="How are you fueling today?"
+        subtitle="Choose the option that best matches your current plan."
+        value={foodStatus}
+        onAnswer={next => { setFoodStatus(next); goNext(); }}
+        options={[
+          { value: 'normal' as const, label: 'Eating normally', detail: 'Fueling as I usually do.', semantic: 'positive' },
+          { value: 'fasted-usual' as const, label: 'Training fasted as usual', detail: 'Not eating before training.', semantic: 'positive' },
+          { value: 'underfueled' as const, label: 'Less food than normal', detail: 'Eating less than usual.', semantic: 'caution' },
+        ]}
+      />
+    </QuestionShell>
+  );
+
+  if (currentStepId === 'hydration') return (
+    <QuestionShell key={currentStepId} {...shellProps}>
+      <CategoricalQuestion
+        title="How’s your hydration?"
+        value={hydrated}
+        onAnswer={next => { setHydrated(next); goNext(); }}
+        options={[
+          { value: true, label: 'About normal hydration', semantic: 'positive' },
+          { value: false, label: 'Less than normal hydration', semantic: 'caution' },
+        ]}
+      />
+    </QuestionShell>
+  );
+
+  if (currentStepId === 'soreness') return (
+    <QuestionShell key={currentStepId} {...shellProps}>
+      <ScaleQuestion title="General training soreness?" subtitle="Whole-body soreness from recent training." value={soreness} left="None" right="Severe" onAnswer={next => { setSoreness(next); goNext(); }} direction="higher-worse" />
+    </QuestionShell>
+  );
+
+  if (currentStepId === 'localized-issue') return (
+    <QuestionShell key={currentStepId} {...shellProps}>
+      <CategoricalQuestion
+        title="Any localized tightness, pulling, or pain?"
+        subtitle="Not general soreness — something specific to one area."
+        value={hasLocalizedIssue}
+        warnOn={true}
+        onAnswer={next => {
+          setHasLocalizedIssue(next);
+          if (!next) { clearLocalizedIssue(); goNext(); return; }
+          setCurrentStepId('symptom-location');
+        }}
+        options={[
+          { value: false, label: 'No', semantic: 'positive' },
+          { value: true, label: 'Yes', semantic: 'caution' },
+        ]}
+      />
+    </QuestionShell>
+  );
+
+  if (currentStepId === 'symptom-location') return (
+    <QuestionShell key={currentStepId} {...shellProps}>
+      <View style={styles.questionBlock}>
+        <Text style={styles.questionTitle}>Where is it?</Text>
+        <View style={styles.choiceStack}>
+          {(Object.entries(locationLabels) as [ReadinessLocation, string][]).map(([value, label]) => {
+            const selected = location === value;
+            return <Pressable key={value} accessibilityRole="radio" accessibilityState={{ selected }} onPress={() => {
+              selection();
+              setLocation(value);
+              if (value !== 'other') { setOtherLocationDetail(''); tap(); goNext(); }
+            }} style={[styles.choiceCard, selected && styles.choiceCardActive]}>
+              <Text style={[styles.choiceLabel, selected && styles.choiceLabelActive]}>{label}</Text>
+              <View style={[styles.choiceDot, selected && styles.choiceDotActive]}>{selected ? <View style={styles.choiceDotCenter} /> : null}</View>
+            </Pressable>;
+          })}
+        </View>
+        {location === 'other' ? <>
+          <TextInput
+            value={otherLocationDetail}
+            onChangeText={setOtherLocationDetail}
+            placeholder="Name the specific area"
+            placeholderTextColor={palette.muted}
+            style={styles.input}
+            autoFocus
+          />
+          <PrimaryButton title="Next" onPress={() => { if (otherLocationDetail.trim()) { tap(); goNext(); } }} disabled={!otherLocationDetail.trim()} />
+        </> : null}
+      </View>
+    </QuestionShell>
+  );
+
+  if (currentStepId === 'symptom-sensation') return (
+    <QuestionShell key={currentStepId} {...shellProps}>
+      <CategoricalQuestion
+        title="How would you describe it?"
+        value={sensation}
+        onAnswer={next => { setSensation(next); goNext(); }}
+        options={[
+          { value: 'minor-tightness' as const, label: sensationLabels['minor-tightness'], detail: 'Tight or stiff; may ease during warm-up.', semantic: 'caution' },
+          { value: 'lingering-niggle' as const, label: sensationLabels['lingering-niggle'], detail: 'Persistent pulling, aching, or discomfort.', semantic: 'caution' },
+          { value: 'severe-acute' as const, label: sensationLabels['severe-acute'], detail: 'Sharp, sudden, or affecting normal movement.', semantic: 'negative' },
+        ]}
+      />
+    </QuestionShell>
+  );
+
+  if (currentStepId === 'symptom-movement') return (
+    <QuestionShell key={currentStepId} {...shellProps}>
+      <CategoricalQuestion
+        title="Does it affect normal movement or make you hold back?"
+        value={hesitatesAtMaxEffort}
+        warnOn={true}
+        onAnswer={next => { setHesitatesAtMaxEffort(next); goNext(); }}
+        options={[
+          { value: false, label: 'No', semantic: 'positive' },
+          { value: true, label: 'Yes', semantic: 'negative' },
+        ]}
+      />
+    </QuestionShell>
+  );
+
+  if (currentStepId === 'symptom-note') return (
+    <QuestionShell key={currentStepId} {...shellProps}>
+      <View style={styles.questionBlock}>
+        <Text style={styles.questionTitle}>Anything else to add?</Text>
+        <Text style={styles.questionSubtitle}>Optional — when it began or what you noticed.</Text>
+        <TextInput
+          value={painNotes}
+          onChangeText={setPainNotes}
+          multiline
+          placeholder="Optional note"
+          placeholderTextColor={palette.muted}
+          style={[styles.input, styles.notes]}
+        />
+        <PrimaryButton title={painNotes.trim() ? 'Next' : 'Skip note'} onPress={() => { tap(); goNext(); }} />
+      </View>
+    </QuestionShell>
+  );
+
+  return null;
 }
 
 const createStyles = (palette: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.bg },
   shell: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
-  header: { minHeight: 66, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  back: { width: 44, height: 44, borderRadius: 15, backgroundColor: palette.surface, alignItems: 'center', justifyContent: 'center' },
+  header: { minHeight: 60, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  back: { width: 40, height: 40, borderRadius: 14, backgroundColor: palette.surface, alignItems: 'center', justifyContent: 'center' },
   headerCopy: { flex: 1 },
   eyebrow: { color: palette.accent, fontSize: 10, fontWeight: '900', letterSpacing: 1.5 },
-  headerTitle: { color: palette.text, fontSize: 18, fontWeight: '900', marginTop: 2 },
-  skipTop: { minWidth: 44, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center' },
+  headerTitle: { color: palette.text, fontSize: 17, fontWeight: '900', marginTop: 2 },
+  skipTop: { minWidth: 40, minHeight: 40, alignItems: 'flex-end', justifyContent: 'center' },
   skipTopText: { color: palette.muted, fontSize: 13, fontWeight: '800' },
-  progressWrap: { paddingHorizontal: 20, paddingVertical: 10, flexDirection: 'row', alignItems: 'center' },
-  progressItem: { flex: 1, flexDirection: 'row', alignItems: 'center', minWidth: 0 },
-  progressDot: { width: 24, height: 24, borderRadius: 12, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, alignItems: 'center', justifyContent: 'center' },
-  progressDotActive: { borderColor: palette.accent, backgroundColor: palette.accent },
-  progressNumber: { color: palette.muted, fontSize: 10, fontWeight: '900' },
-  progressNumberActive: { color: '#081000' },
-  progressLabel: { color: palette.muted, fontSize: 10, fontWeight: '800', marginLeft: 6 },
-  progressLabelActive: { color: palette.text },
-  progressLine: { flex: 1, height: 1, backgroundColor: palette.border, marginHorizontal: 8 },
-  progressLineActive: { backgroundColor: palette.accent },
-  page: { padding: 20, paddingBottom: 28, flexGrow: 1 },
+  progressRow: { paddingHorizontal: 20, paddingTop: 6, paddingBottom: 4, gap: 6 },
+  progressLabel: { color: palette.muted, fontSize: 11, fontWeight: '800' },
+  progressTrack: { height: 4, borderRadius: 2, backgroundColor: palette.surface2, overflow: 'hidden' },
+  progressFill: { height: '100%', borderRadius: 2, backgroundColor: palette.accent },
+  page: { padding: 20, paddingTop: 18, paddingBottom: 28, flexGrow: 1, justifyContent: 'center' },
+  questionBlock: { gap: 14 },
+  questionTitle: { color: palette.text, fontSize: 26, lineHeight: 31, fontWeight: '900' },
+  questionSubtitle: { color: palette.muted, fontSize: 14, lineHeight: 20, marginTop: -6 },
+  questionLabelSmall: { color: palette.text, fontSize: 15, fontWeight: '900' },
+  scaleRow: { flexDirection: 'row', gap: 9, marginTop: 6 },
+  scaleCell: { flex: 1, minWidth: 44, height: 64, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface },
+  scaleCellActive: { borderColor: palette.accent, backgroundColor: palette.accent },
+  scaleCellText: { color: palette.text, fontSize: 18, fontWeight: '900' },
+  scaleCellTextActive: { color: '#081000' },
+  scaleEndpoints: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 2 },
+  endpoint: { color: palette.muted, fontSize: 12, fontWeight: '700' },
+  dimmed: { opacity: 0.45 },
+  choiceStack: { gap: 9 },
+  choiceStackHorizontal: { flexDirection: 'row', gap: 8 },
+  choiceCard: { minHeight: 60, borderRadius: 16, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 15, paddingVertical: 12 },
+  choiceChip: { flex: 1, minHeight: 48, borderRadius: 13, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, alignItems: 'center', justifyContent: 'center' },
+  choiceCardActive: { borderColor: palette.accent, backgroundColor: palette.accentDark },
+  choiceContent: { flex: 1 },
+  choiceLabel: { color: palette.text, fontSize: 15, fontWeight: '800' },
+  choiceLabelActive: { color: palette.accent },
+  choiceDetail: { color: palette.muted, fontSize: 12, lineHeight: 16, marginTop: 2 },
+  choiceDot: { width: 19, height: 19, borderRadius: 10, borderWidth: 2, borderColor: palette.muted, alignItems: 'center', justifyContent: 'center' },
+  choiceDotActive: { borderColor: palette.accent },
+  choiceDotCenter: { width: 8, height: 8, borderRadius: 4, backgroundColor: palette.accent },
+  sleepValueRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20, marginTop: 8 },
+  sleepStepper: { width: 48, height: 48, borderRadius: 24, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.border, alignItems: 'center', justifyContent: 'center' },
+  sleepReadout: { minWidth: 140, alignItems: 'center' },
+  sleepReadoutValue: { color: palette.accent, fontSize: 40, fontWeight: '900', letterSpacing: -1 },
+  sleepTrackWrap: { marginTop: 22, paddingVertical: 8 },
+  sleepTrack: { height: 8, borderRadius: 4, backgroundColor: palette.surface2, justifyContent: 'center' },
+  sleepTrackFill: { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 4, backgroundColor: palette.accent },
+  sleepThumb: { position: 'absolute', width: 26, height: 26, borderRadius: 13, backgroundColor: palette.accent, borderWidth: 3, borderColor: palette.bg, marginLeft: -13 },
+  sleepTicks: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 14 },
+  sleepTickText: { color: palette.muted, fontSize: 11, fontWeight: '700' },
+  unusualRow: { minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: '#6D4720', backgroundColor: '#2A1B0C', flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 11, marginTop: 4 },
+  unusualRowConfirmed: { borderColor: palette.accent, backgroundColor: palette.accentDark },
+  unusualText: { color: palette.text, fontSize: 12, lineHeight: 16, fontWeight: '700', flex: 1 },
+  input: { minHeight: 48, borderRadius: 12, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface2, color: palette.text, paddingHorizontal: 12, fontSize: 14, marginTop: 4 },
+  notes: { minHeight: 90, paddingTop: 12, textAlignVertical: 'top' },
   stage: { gap: 24 },
   stageTitle: { color: palette.text, fontSize: 31, lineHeight: 36, fontWeight: '900' },
   stageCopy: { color: palette.muted, fontSize: 14, lineHeight: 20, marginTop: 6 },
-  questionGroup: { gap: 4 },
-  questionLabel: { color: palette.text, fontSize: 15, lineHeight: 20, fontWeight: '900', marginBottom: 7 },
-  valueRow: { minHeight: 58, borderRadius: 15, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.border, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, gap: 10 },
-  valueIcon: { width: 34, height: 34, borderRadius: 10, backgroundColor: palette.accentDark, alignItems: 'center', justifyContent: 'center' },
-  valueRowLabel: { color: palette.text, fontSize: 14, fontWeight: '800', flex: 1 },
-  valueRowValue: { color: palette.text, fontSize: 14, fontWeight: '900' },
-  valuePlaceholder: { color: palette.muted },
-  unusualRow: { minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: '#6D4720', backgroundColor: '#2A1B0C', flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 11, marginTop: 7 },
-  unusualRowConfirmed: { borderColor: palette.accent, backgroundColor: palette.accentDark },
-  unusualText: { color: palette.text, fontSize: 11, lineHeight: 16, fontWeight: '700', flex: 1 },
-  baselineText: { color: palette.muted, fontSize: 11, marginTop: 5 },
-  scale: { flexDirection: 'row', gap: 7 },
-  scaleItem: { flex: 1, minWidth: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface },
-  scaleActive: { borderColor: palette.accent, backgroundColor: palette.accent },
-  scaleText: { color: palette.text, fontSize: 14, fontWeight: '900' },
-  scaleTextActive: { color: '#081000' },
-  scaleEndpoints: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6, paddingHorizontal: 2 },
-  endpoint: { color: palette.muted, fontSize: 11, fontWeight: '700' },
-  choiceList: { gap: 7 },
-  choiceListHorizontal: { flexDirection: 'row' },
-  choice: { minHeight: 48, borderRadius: 13, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 9 },
-  choiceDense: { minHeight: 44, paddingVertical: 6 },
-  choiceCompact: { flex: 1 },
-  choiceSelected: { borderColor: palette.accent, backgroundColor: palette.accentDark },
-  choiceDot: { width: 17, height: 17, borderRadius: 9, borderWidth: 2, borderColor: palette.muted, alignItems: 'center', justifyContent: 'center' },
-  choiceDotSelected: { borderColor: palette.accent },
-  choiceDotCenter: { width: 7, height: 7, borderRadius: 4, backgroundColor: palette.accent },
-  choiceContent: { flex: 1 },
-  choiceLabel: { color: palette.text, fontSize: 13, lineHeight: 18, fontWeight: '800' },
-  choiceLabelSelected: { color: palette.accent },
-  choiceDetail: { color: palette.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
-  symptomSummary: { minHeight: 56, borderRadius: 13, borderWidth: 1, borderColor: '#6D4720', backgroundColor: '#2A1B0C', flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 12, marginTop: 8 },
-  symptomSummaryCopy: { flex: 1 },
-  symptomSummaryTitle: { color: palette.text, fontSize: 12, fontWeight: '900' },
-  symptomSummaryText: { color: palette.muted, fontSize: 11, marginTop: 2 },
-  editText: { color: palette.accent, fontSize: 12, fontWeight: '900' },
   resultCard: { gap: 15, borderWidth: 1.5, padding: 18 },
   resultHead: { flexDirection: 'row', alignItems: 'center', gap: 11 },
   resultHeading: { flex: 1 },
@@ -925,27 +970,4 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   editAnswers: { minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
   editAnswersText: { color: palette.muted, fontSize: 12, fontWeight: '800' },
   bottomBar: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 12, borderTopWidth: 1, borderTopColor: palette.border, backgroundColor: palette.bg },
-  modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.65)' },
-  sheet: { backgroundColor: palette.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 32, borderTopWidth: 1, borderColor: palette.border },
-  symptomSheet: { height: '82%', maxHeight: 700, backgroundColor: palette.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderTopWidth: 1, borderColor: palette.border, overflow: 'hidden' },
-  symptomFixedHeader: { paddingHorizontal: 18, paddingTop: 9, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: palette.border },
-  symptomScroll: { flex: 1 },
-  symptomSheetContent: { padding: 18, paddingBottom: 24, gap: 17 },
-  sheetHandle: { width: 42, height: 4, borderRadius: 2, backgroundColor: palette.border, alignSelf: 'center', marginBottom: 10 },
-  sheetHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  sheetHeaderCopy: { flex: 1 },
-  sheetTitle: { color: palette.text, fontSize: 20, fontWeight: '900' },
-  sheetCopy: { color: palette.muted, fontSize: 12, lineHeight: 17, marginTop: 3 },
-  doneButton: { minWidth: 58, minHeight: 44, borderRadius: 12, backgroundColor: palette.accent, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 13 },
-  doneText: { color: '#081000', fontSize: 13, fontWeight: '900' },
-  closeButton: { width: 44, height: 44, borderRadius: 13, backgroundColor: palette.surface2, alignItems: 'center', justifyContent: 'center' },
-  symptomFooter: { paddingHorizontal: 18, paddingTop: 10, paddingBottom: Platform.OS === 'ios' ? 22 : 14, borderTopWidth: 1, borderTopColor: palette.border, backgroundColor: palette.surface },
-  symptomSave: { minHeight: 50, borderRadius: 14, backgroundColor: palette.accent, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
-  symptomSaveDisabled: { backgroundColor: palette.surface2, borderWidth: 1, borderColor: palette.border },
-  symptomSaveText: { color: '#081000', fontSize: 14, fontWeight: '900' },
-  symptomSaveTextDisabled: { color: palette.muted },
-  durationPickers: { flexDirection: 'row', gap: 8, marginTop: 14 },
-  picker: { flex: 1, color: palette.text, backgroundColor: palette.surface2 },
-  input: { minHeight: 48, borderRadius: 12, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface2, color: palette.text, paddingHorizontal: 12, fontSize: 14, marginTop: 7 },
-  notes: { minHeight: 78, paddingTop: 12, textAlignVertical: 'top' },
 });

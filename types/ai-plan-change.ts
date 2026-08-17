@@ -11,7 +11,16 @@
  * TypeScript discriminated union, because that is what reliably survives Gemini's JSON
  * structured-output schema. `PLAN_CHANGE_PROPOSAL_JSON_SCHEMA` below is the JSON Schema
  * sent to the model; keep both in sync when either changes.
+ *
+ * SprintLab Coach UI Phase C-4 adds a sibling `action` field (types/coach-action.ts's
+ * `CoachAction`) to the same response payload for navigation/workflow cards. `proposal` and
+ * `action` are conceptually distinct: a proposal can mutate the plan (through validation +
+ * explicit approval); an action only opens an existing SprintLab screen and never mutates
+ * anything itself. /api/coach's sanitizer keeps at most one of the two per response — a
+ * proposal always takes precedence — so the client only ever renders one primary card.
  */
+
+import { COACH_ACTION_JSON_SCHEMA, type CoachAction } from '@/types/coach-action';
 
 export type PlanChangeType =
   | 'move_workout'
@@ -43,10 +52,13 @@ export type PlanChangeProposal = {
   confidence?: PlanChangeConfidence;
 };
 
-/** Gemini structured-output response shape for /api/coach: a normal answer, optionally with one proposal. */
+/** Gemini structured-output response shape for /api/coach: a normal answer, optionally with one
+ * proposal (a plan mutation to review) or one action (a navigation/workflow card) — never both;
+ * see the module doc above. */
 export type CoachResponsePayload = {
   message: string;
   proposal: PlanChangeProposal | null;
+  action: CoachAction | null;
 };
 
 export const PLAN_CHANGE_TYPES: PlanChangeType[] = [
@@ -87,6 +99,9 @@ export const COACH_RESPONSE_JSON_SCHEMA = {
         },
       ],
     },
+    action: {
+      anyOf: [{ type: 'null' }, COACH_ACTION_JSON_SCHEMA],
+    },
   },
-  required: ['message', 'proposal'],
+  required: ['message', 'proposal', 'action'],
 } as const;

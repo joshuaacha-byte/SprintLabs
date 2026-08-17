@@ -1,17 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { Alert, Animated, Image, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Animated, Easing, Image, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { NativeDateField, NativeTimeField } from '@/components/date-time-fields';
-import { CommitmentHoldButton, MultiSelectCard, OnboardingLayout, OnboardingProgress, PerformanceInput, PerformanceTimeWheel, PrimaryOnboardingButton, ProfileRevealCard, SecondaryOnboardingButton, SelectableCard, splitImages, SplitGuide, SplitPose } from '@/components/onboarding';
+import { CommitmentHoldButton, MultiSelectCard, OnboardingLayout, OnboardingProgress, PerformanceInput, PerformanceTimeWheel, PrimaryOnboardingButton, SecondaryOnboardingButton, SelectableCard, splitImages, SplitGuide, SplitPose, useAutoAdvance } from '@/components/onboarding';
 import { PlanBuildStep } from '@/components/plan-build-loading';
 import { Palette, useTheme } from '@/constants/sprintlab';
 import type { AthleteExperienceLevel, AthleteProfile, AthleteSport, CompetitionStatus, PainArea, RaceDevelopmentArea, SpeedGoal, SprintEvent, TimeAwayDuration, TimingMethod, TrainingConcernArea, TrainingConcernStatus, TrainingDay, TrainingDemand } from '@/types';
-import { classificationExplanation, profileSummary, sportReaction } from '@/utils/onboarding-copy';
-import { error as hapticError, success as hapticSuccess, tap, warning as hapticWarning } from '@/utils/haptics';
-import { clearAthleteOnboardingDraft, getAthleteOnboardingDraft, getAthleteProfile, getTrainingWorkflow, resetAllSprintLabLocalData, resetAthleteOnboarding, saveAthleteOnboardingDraft, saveAthleteProfile, trainingWorkflowChanges, type TrainingWorkflow } from '@/utils/athlete-profile';
+import { classificationExplanation, speedClassificationLabel, sportReaction } from '@/utils/onboarding-copy';
+import { completeStep, error as hapticError, success as hapticSuccess, tap, warning as hapticWarning } from '@/utils/haptics';
+import { athleteFirstName, clearAthleteOnboardingDraft, getAthleteOnboardingDraft, getAthleteProfile, getTrainingWorkflow, possessiveTitle, resetAllSprintLabLocalData, resetAthleteOnboarding, saveAthleteOnboardingDraft, saveAthleteProfile, trainingWorkflowChanges, type TrainingWorkflow } from '@/utils/athlete-profile';
 import { reminderTimeLabel, syncWorkoutReminders } from '@/utils/workout-reminders';
+import { NotificationSetupCard } from '@/components/notification-setup-card';
+import {
+  getNotificationPermissionStatus,
+  requestNotificationPermission,
+  setNotificationOptInDecision,
+  type NotificationPermissionStatus,
+} from '@/utils/notification-permission';
 import { getTrackPerformanceInputRange } from '@/utils/performance-time';
 
 const TOTAL_STEPS = 18;
@@ -41,6 +48,21 @@ const SPEED_GOAL_LIBRARY: Record<SpeedGoal, { label: string; detail: string }> =
   'combine-testing': { label: 'Testing performance', detail: 'Prepare for a specific timed or tested event.' },
   'track-race-performance': { label: 'Race performance', detail: 'Execute the race, not just train the parts.' },
   'general-speed-development': { label: 'Balanced speed development', detail: 'Train every quality without one main weakness.' },
+};
+
+// Speed-profile reveal (RevealStep): one icon per speed goal, reusing the same MaterialIcons set
+// already installed for the rest of the app — no new icon dependency.
+const SPEED_GOAL_ICONS: Record<SpeedGoal, React.ComponentProps<typeof MaterialIcons>['name']> = {
+  'first-step-quickness': 'directions-run',
+  acceleration: 'bolt',
+  'maximum-velocity': 'trending-up',
+  'multidirectional-speed': 'compare-arrows',
+  'repeated-sprint-ability': 'repeat',
+  'speed-endurance': 'autorenew',
+  'explosive-power': 'fitness-center',
+  'combine-testing': 'timer',
+  'track-race-performance': 'flag',
+  'general-speed-development': 'speed',
 };
 
 const SPORT_GOAL_LABEL_OVERRIDES: Partial<Record<AthleteSport, Partial<Record<SpeedGoal, string>>>> = {
@@ -114,12 +136,33 @@ function clearedSportSpecificAnswers(): Partial<AthleteProfile> {
     footballProfile: undefined,
     trackProfile: undefined,
     sportProfileAnswered: false,
+    trackEventsAnswered: false,
+    trackMainEventAnswered: false,
   };
 }
 
 function blankProfile(): AthleteProfile {
   const now = new Date().toISOString();
-  return { id: 'local-athlete', name: '', ageRange: '16-17', competitionCategory: 'high-school', primaryEvent: '100m', secondaryEvents: [], personalBests: [], experienceLevel: 'developing', seasonPhase: 'general-preparation', trainingDaysPerWeek: 0, availableTrainingDays: [], exactTrainingDaysPreference: undefined, preferredRestDay: 'sunday', preferredRestDayAnswered: false, usualSessionDurationMinutes: 60, trackAccess: 'regular', grassAccess: 'regular', hillAccess: 'none', indoorAccess: 'none', startingBlocksAccess: 'none', weightRoomAccess: 'none', homeEquipment: ['none'], coachInvolvement: 'none', liftingExperience: 'beginner', blockStartExperience: 'none', primaryGoal: 'build-speed', nextMeetDate: null, championshipDate: null, loggingOnlyMode: false, sport: 'track-and-field', primarySport: undefined, sports: [], sportPosition: null, speedGoals: [], competitionLevel: 'high-school', trainingContext: 'general-development', primaryPerformanceTest: null, secondaryPerformanceTests: [], sportPracticeDays: [], gameOrCompetitionDays: [], gameScheduleVaries: false, otherSportDays: [], busySchoolDays: [], commitmentSchedulePlaced: false, currentTeamTrainingLoad: 'unknown', courtAccess: 'none', turfAccess: 'regular', sledAccess: 'none', timingGatesAccess: 'none', conesAccess: 'regular', trainingPlanMode: undefined, trainingPlanModeAnswered: false, currentPain: false, cautionAreas: [], onboardingLimitations: [], trainingConcernDetails: [], otherConcernArea: '', returningAfterTimeOff: false, trainingConstraintsReviewed: false, currentTrainingDemands: [], workoutReminderEnabled: false, workoutReminderHour: 16, workoutReminderMinute: 0, workoutReminderCustomTime: false, workoutReminderAnswered: false, raceDevelopmentAreas: [], targetPerformances: [], seasonCalendar: { competitionStatus: 'unknown', priorityMeets: [] }, seasonPhaseOverride: null, createdAt: now, updatedAt: now, onboardingComplete: false, experienceAnswered: false, sportProfileAnswered: false, primarySportAnswered: false };
+  return { id: 'local-athlete', name: '', ageRange: '16-17', competitionCategory: 'high-school', primaryEvent: '100m', secondaryEvents: [], personalBests: [], experienceLevel: 'developing', seasonPhase: 'general-preparation', trainingDaysPerWeek: 0, availableTrainingDays: [], exactTrainingDaysPreference: undefined, preferredRestDay: 'sunday', preferredRestDayAnswered: false, usualSessionDurationMinutes: 60, trackAccess: 'regular', grassAccess: 'regular', hillAccess: 'none', indoorAccess: 'none', startingBlocksAccess: 'none', weightRoomAccess: 'none', homeEquipment: ['none'], coachInvolvement: 'none', liftingExperience: 'beginner', blockStartExperience: 'none', primaryGoal: 'build-speed', nextMeetDate: null, championshipDate: null, loggingOnlyMode: false, sport: 'track-and-field', primarySport: undefined, sports: [], sportPosition: null, speedGoals: [], competitionLevel: 'high-school', trainingContext: 'general-development', primaryPerformanceTest: null, secondaryPerformanceTests: [], sportPracticeDays: [], gameOrCompetitionDays: [], gameScheduleVaries: false, otherSportDays: [], busySchoolDays: [], commitmentSchedulePlaced: false, currentTeamTrainingLoad: 'unknown', courtAccess: 'none', turfAccess: 'regular', sledAccess: 'none', timingGatesAccess: 'none', conesAccess: 'regular', trainingPlanMode: undefined, trainingPlanModeAnswered: false, currentPain: false, cautionAreas: [], onboardingLimitations: [], trainingConcernDetails: [], otherConcernArea: '', returningAfterTimeOff: false, trainingConstraintsReviewed: false, currentTrainingDemands: [], workoutReminderEnabled: false, workoutReminderHour: 16, workoutReminderMinute: 0, workoutReminderCustomTime: false, workoutReminderAnswered: false, raceDevelopmentAreas: [], targetPerformances: [], seasonCalendar: { competitionStatus: 'unknown', priorityMeets: [] }, seasonPhaseOverride: null, createdAt: now, updatedAt: now, onboardingComplete: false, experienceAnswered: false, sportProfileAnswered: false, primarySportAnswered: false, trackEventsAnswered: false, trackMainEventAnswered: false };
+}
+
+/**
+ * Onboarding V3: the track event/PR sub-flow inside step 6 — "What do you race?", then (only if
+ * more than one event was selected) "What's your main event right now?", then a dedicated PR
+ * screen. All three phases stay on the same top-level `step` number so nothing downstream needs
+ * renumbering; `trackEventsAnswered`/`trackMainEventAnswered` gate which phase is current, and
+ * `sportProfileAnswered` remains the single "this whole step is done" flag it always was.
+ *
+ * While `trackEventsAnswered` is still false, `secondaryEvents` is treated as a scratch list of
+ * every currently-selected event (not yet split into primary/secondary) — `primaryEvent` is
+ * left untouched and irrelevant until a main event is actually chosen. This is why phase
+ * detection below never merges `primaryEvent` into the "how many are selected" count until the
+ * main-event question is answered.
+ */
+function trackProfilePhase(profile: AthleteProfile): 'events' | 'main-event' | 'prs' {
+  if (!profile.trackEventsAnswered) return 'events';
+  if (!profile.trackMainEventAnswered && profile.secondaryEvents.length > 1) return 'main-event';
+  return 'prs';
 }
 
 const pretty = (value: string) => value.replaceAll('-', ' ').replace(/\b\w/g, letter => letter.toUpperCase());
@@ -167,6 +210,22 @@ export default function ProfileScreen() {
     go(step + 1);
   };
   const back = () => {
+    if (step === 6 && profile.primarySport === 'track-and-field') {
+      const phase = trackProfilePhase(profile);
+      if (phase === 'prs' && profile.secondaryEvents.length >= 1) {
+        // Restore secondaryEvents to the FULL candidate list (undoing the primary/secondary
+        // split TrackMainEventStep performed) so trackProfilePhase's `length > 1` check and
+        // TrackMainEventStep's own candidate list both see every originally-selected event again.
+        update({ trackMainEventAnswered: false, secondaryEvents: [...new Set([...profile.secondaryEvents, profile.primaryEvent])] });
+        setError('');
+        return;
+      }
+      if (phase === 'prs' || phase === 'main-event') {
+        update({ trackEventsAnswered: false, trackMainEventAnswered: false });
+        setError('');
+        return;
+      }
+    }
     if (step === 10 && profile.commitmentSchedulePlaced) {
       update({ commitmentSchedulePlaced: false });
       setError('');
@@ -226,6 +285,10 @@ export default function ProfileScreen() {
         ? `Continue with ${speedGoalOptionsFor(profile.primarySport).find(option => option.value === selectedSpeedGoals[0])?.label ?? 'priority'}`
         : 'Continue with 2 priorities';
   const isFootballBaselineStep = step === 6 && profile.primarySport === 'football';
+  const trackPhase = step === 6 && profile.primarySport === 'track-and-field' ? trackProfilePhase(profile) : null;
+  const isTrackEventsStep = trackPhase === 'events';
+  const isTrackMainEventStep = trackPhase === 'main-event';
+  const isTrackPrsStep = trackPhase === 'prs';
   const isExperienceStep = step === 8;
   const isFrequencyStep = step === 9;
   const isDemandsStep = step === 10;
@@ -236,16 +299,6 @@ export default function ProfileScreen() {
   const isSourcesStep = step === 15;
   const isRevealStep = step === 17;
   const isCommitmentStep = step === 18;
-  const experienceCtaLabels: Record<AthleteExperienceLevel, string> = {
-    beginner: 'new',
-    developing: 'some experience',
-    intermediate: 'consistent',
-    advanced: 'experienced',
-    elite: 'experienced',
-  };
-  const experienceCtaTitle = profile.experienceAnswered
-    ? `Continue as ${experienceCtaLabels[profile.experienceLevel]}`
-    : 'Choose your experience';
   const footballBaseline = profile.footballProfile;
   const footballTrainingFocus = footballBaseline?.trainingFocus;
   const footballBaselineStatus = footballBaseline?.baselineStatus
@@ -344,51 +397,12 @@ export default function ProfileScreen() {
     : calendarHasDates
       ? 'Use these competition dates'
       : 'Continue without dates';
-  const trainingWorkflow = getTrainingWorkflow(profile);
-  const modeCtaTitle = trainingWorkflow === 'sprintlab-plan'
-    ? 'Build my SprintLab plan'
-    : trainingWorkflow === 'coach-plan'
-      ? 'Set up my coach’s plan'
-      : trainingWorkflow === 'combined'
-        ? 'Set up combined planning'
-        : trainingWorkflow === 'log-only'
-          ? 'Start logging training'
-          : 'Choose how SprintLab should help';
-  const reminderAnswered = Boolean(profile.workoutReminderAnswered);
-  const reminderCtaTitle = !reminderAnswered
-    ? 'Choose a reminder option'
-    : !profile.workoutReminderEnabled
-      ? 'Continue without reminders'
-      : `Set ${reminderTimeLabel(profile.workoutReminderHour, profile.workoutReminderMinute)} reminders`;
-  const handleReminderContinue = async () => {
-    if (!reminderAnswered) return;
-    try {
-      const result = await syncWorkoutReminders({
-        profile,
-        requestPermission: Boolean(profile.workoutReminderEnabled),
-      });
-      if (result.status === 'permission-denied') {
-        Alert.alert(
-          'Notifications are off',
-          'Onboarding will continue normally. You can allow workout reminders later in SprintLab Settings and your device settings.',
-        );
-      }
-    } catch {
-      hapticError();
-      Alert.alert(
-        'Reminder not set',
-        'Onboarding will continue normally. You can try enabling workout reminders later in SprintLab Settings.',
-      );
-    }
-    next();
-  };
-
   return <OnboardingLayout
     key={step}
     welcome={step === 1}
     trackLanes={step === 3 || isSpeedPriorityStep || isCommitmentStep}
     bare={step === 16}
-    footer={step === 16
+    footer={step === 16 || isTrackEventsStep || isTrackMainEventStep || isTrackPrsStep || isExperienceStep || isModeStep || isReminderStep
       ? undefined
       : step === 3
       ? <PrimaryOnboardingButton title={sportCtaTitle} disabled={selectedSports.length === 0} onPress={next} />
@@ -396,8 +410,6 @@ export default function ProfileScreen() {
         ? <PrimaryOnboardingButton title={speedPriorityCtaTitle} disabled={selectedSpeedGoals.length === 0} onPress={next} />
         : isFootballBaselineStep
           ? <PrimaryOnboardingButton title={footballBaselineCtaTitle} disabled={!footballBaselineValid} onPress={next} />
-          : isExperienceStep
-            ? <PrimaryOnboardingButton title={experienceCtaTitle} disabled={!profile.experienceAnswered} onPress={next} />
           : isFrequencyStep
             ? <PrimaryOnboardingButton title={frequencyCtaTitle} disabled={!frequencyValid || !exactDaysComplete} onPress={next} />
             : isDemandsStep
@@ -406,11 +418,7 @@ export default function ProfileScreen() {
                 ? <PrimaryOnboardingButton title={limitationsCtaTitle} disabled={reviewingConstraints && !limitationDetailsComplete} onPress={handleLimitationsContinue} />
                 : isSeasonStep
                   ? <PrimaryOnboardingButton title={calendarCtaTitle} disabled={calendar.competitionStatus === 'unknown'} onPress={next} />
-                  : isModeStep
-                    ? <PrimaryOnboardingButton title={modeCtaTitle} disabled={!trainingWorkflow} onPress={next} />
-                    : isReminderStep
-                      ? <PrimaryOnboardingButton title={reminderCtaTitle} disabled={!reminderAnswered} onPress={() => void handleReminderContinue()} />
-                      : isSourcesStep
+                  : isSourcesStep
                         ? <View style={styles.sourcesFooter}>
                             <PrimaryOnboardingButton title="Review my plan setup" onPress={next} />
                             <Pressable
@@ -423,7 +431,7 @@ export default function ProfileScreen() {
                             </Pressable>
                           </View>
                         : isRevealStep
-                          ? <PrimaryOnboardingButton title="Continue to my week" onPress={next} />
+                          ? undefined
                           : isCommitmentStep
                             ? <CommitmentHoldButton
                                 title={editing ? 'Hold to save changes' : 'Hold to commit'}
@@ -436,11 +444,11 @@ export default function ProfileScreen() {
         : undefined}
   >
     {step === 1 ? <Welcome onContinue={() => go(2)} onOpenDebugMenu={openDebugMenu} /> : <>
-      {step === 16 ? null : <OnboardingProgress step={isCommitmentStep ? 1 : step === 3 ? 2 : isSpeedPriorityStep ? 4 : isRevealStep ? 2 : isFootballBaselineStep || isExperienceStep || isFrequencyStep || isSeasonStep || isModeStep || isSourcesStep ? 1 : isReminderStep ? 2 : isDemandsStep ? (placingCommitments ? 3 : 2) : isLimitationsStep ? (reviewingConstraints ? 2 : 1) : step - 1} total={isCommitmentStep ? 1 : step === 3 || isSpeedPriorityStep ? 6 : isFootballBaselineStep || isExperienceStep ? 4 : isFrequencyStep || isDemandsStep ? 3 : isLimitationsStep ? 2 : isSeasonStep ? 1 : isModeStep || isReminderStep || isSourcesStep || isRevealStep ? 2 : TOTAL_STEPS - 1} onBack={back} stageLabel={isCommitmentStep ? 'Commitment · 1 of 1' : isFootballBaselineStep ? 'Performance · 1 of 4' : isExperienceStep ? 'Training · 1 of 4' : isFrequencyStep ? 'Schedule · 1 of 3' : isDemandsStep ? `Schedule · ${placingCommitments ? 3 : 2} of 3` : isLimitationsStep ? `Constraints · ${reviewingConstraints ? 2 : 1} of 2` : isSeasonStep ? 'Season · 1 of 1' : isModeStep ? 'Setup · 1 of 2' : isReminderStep ? 'Setup · 2 of 2' : isSourcesStep ? 'Plan · 1 of 2' : isRevealStep ? 'Plan · 2 of 2' : stageLabelForStep(step)} />}
-      {isCommitmentStep || step === 16 ? null : <SplitGuide speech={speech} pose={splitPose} compact={step === 3 || isSpeedPriorityStep || isFootballBaselineStep || isSourcesStep || isRevealStep} prominent={step === 12 || step === 13} />}
+      {step === 16 ? null : <OnboardingProgress step={isCommitmentStep ? 1 : step === 3 ? 2 : isSpeedPriorityStep ? 4 : isRevealStep ? 2 : isFootballBaselineStep || isTrackEventsStep || isTrackMainEventStep || isTrackPrsStep || isExperienceStep || isFrequencyStep || isSeasonStep || isModeStep || isSourcesStep ? 1 : isReminderStep ? 2 : isDemandsStep ? (placingCommitments ? 3 : 2) : isLimitationsStep ? (reviewingConstraints ? 2 : 1) : step - 1} total={isCommitmentStep ? 1 : step === 3 || isSpeedPriorityStep ? 6 : isFootballBaselineStep || isExperienceStep ? 4 : isFrequencyStep || isDemandsStep ? 3 : isLimitationsStep ? 2 : isSeasonStep || isTrackEventsStep || isTrackMainEventStep || isTrackPrsStep ? 1 : isModeStep || isReminderStep || isSourcesStep || isRevealStep ? 2 : TOTAL_STEPS - 1} onBack={back} stageLabel={isCommitmentStep ? 'Commitment · 1 of 1' : isFootballBaselineStep ? 'Performance · 1 of 4' : isTrackEventsStep ? 'Your events' : isTrackMainEventStep ? 'Main event' : isTrackPrsStep ? 'Personal bests' : isExperienceStep ? 'Training · 1 of 4' : isFrequencyStep ? 'Schedule · 1 of 3' : isDemandsStep ? `Schedule · ${placingCommitments ? 3 : 2} of 3` : isLimitationsStep ? `Constraints · ${reviewingConstraints ? 2 : 1} of 2` : isSeasonStep ? 'Season · 1 of 1' : isModeStep ? 'Setup · 1 of 2' : isReminderStep ? 'Setup · 2 of 2' : isSourcesStep ? 'Plan · 1 of 2' : isRevealStep ? 'Plan · 2 of 2' : stageLabelForStep(step)} />}
+      {isCommitmentStep || step === 16 || isTrackMainEventStep || step === 4 || isModeStep || isRevealStep ? null : <SplitGuide speech={speech} pose={splitPose} compact={step === 3 || isSpeedPriorityStep || isFootballBaselineStep || isSourcesStep || isTrackEventsStep || isTrackPrsStep || isExperienceStep} prominent={step === 12} />}
       <View style={[styles.content, step === 16 && styles.contentBare]}>{renderStep(step, profile, update, go, next)}</View>
       {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-      {step === 3 || step === 16 || isSpeedPriorityStep || isFootballBaselineStep || isExperienceStep || isFrequencyStep || isDemandsStep || isLimitationsStep || isSeasonStep || isModeStep || isReminderStep || isSourcesStep || isRevealStep || isCommitmentStep ? null : step === 2 ? <><PrimaryOnboardingButton title={profile.name.trim() ? 'Continue' : 'Skip for now'} onPress={next} /><SecondaryOnboardingButton title="Back" onPress={() => go(1)} /></> : step === 7 ? null : <PrimaryOnboardingButton title="Continue" onPress={next} />}
+      {step === 3 || step === 16 || isSpeedPriorityStep || isFootballBaselineStep || isTrackEventsStep || isTrackMainEventStep || isTrackPrsStep || isExperienceStep || isFrequencyStep || isDemandsStep || isLimitationsStep || isSeasonStep || isModeStep || isReminderStep || isSourcesStep || isRevealStep || isCommitmentStep ? null : step === 2 ? <><PrimaryOnboardingButton title={profile.name.trim() ? 'Continue' : 'Skip for now'} onPress={next} /><SecondaryOnboardingButton title="Back" onPress={() => go(1)} /></> : step === 4 ? null : step === 7 ? null : <PrimaryOnboardingButton title="Continue" onPress={next} />}
     </>}
   </OnboardingLayout>;
 }
@@ -449,27 +457,27 @@ function renderStep(step: number, profile: AthleteProfile, update: (value: Parti
   if (step === 1) return null;
   if (step === 2) return <NameStep profile={profile} update={update} />;
   if (step === 3) return <SportsStep profile={profile} update={update} />;
-  if (step === 4) return <MainFocusStep profile={profile} update={update} />;
+  if (step === 4) return <MainFocusStep profile={profile} update={update} go={go} />;
   if (step === 5) return <GoalsStep profile={profile} update={update} />;
-  if (step === 6) return <SportProfileStep profile={profile} update={update} />;
+  if (step === 6) return <SportProfileStep profile={profile} update={update} go={go} />;
   if (step === 7) return <TargetStep profile={profile} update={update} onContinue={() => go(8)} />;
-  if (step === 8) return <ExperienceStep profile={profile} update={update} />;
+  if (step === 8) return <ExperienceStep profile={profile} update={update} go={go} />;
   if (step === 9) return <FrequencyStep profile={profile} update={update} />;
   if (step === 10) return <DemandsStep profile={profile} update={update} />;
   if (step === 11) return <LimitationsStep profile={profile} update={update} />;
   if (step === 12) return <SeasonStep profile={profile} update={update} />;
-  if (step === 13) return <ModeStep profile={profile} update={update} />;
-  if (step === 14) return <ReminderStep profile={profile} update={update} />;
+  if (step === 13) return <ModeStep profile={profile} update={update} go={go} />;
+  if (step === 14) return <ReminderStep profile={profile} update={update} go={go} />;
   if (step === 15) return <SourcesStep />;
   if (step === 16) return <PlanBuildStep profile={profile} onReady={onPlanReady} />;
-  if (step === 17) return <RevealStep profile={profile} go={go} />;
+  if (step === 17) return <RevealStep profile={profile} go={go} onContinue={onPlanReady} />;
   return <CommitmentStep profile={profile} />;
 }
 
 function CommitmentStep({ profile }: { profile: AthleteProfile }) {
   const palette = useTheme();
   const styles = useMemo(() => createStyles(palette), [palette]);
-  const name = profile.name.trim().split(/\s+/)[0] || 'Athlete';
+  const name = athleteFirstName(profile) || 'Athlete';
   return <View style={styles.commitmentScreen}>
     <Text style={styles.commitmentEyebrow}>ONE LAST STEP</Text>
     <Text style={styles.commitmentTitle}>Training with purpose</Text>
@@ -595,12 +603,23 @@ function SportSelectCard({
   </Pressable>;
 }
 
-function MainFocusStep({ profile, update }: Props) {
+function MainFocusStep({ profile, update, go }: Props & { go: (step: number) => void }) {
   const palette = useTheme();
   const styles = useMemo(() => createStyles(palette), [palette]);
   const selected = profile.sports ?? [];
+  const { schedule, pending } = useAutoAdvance();
+  const [justSelected, setJustSelected] = useState<AthleteSport | null>(
+    profile.primarySportAnswered && profile.primarySport ? profile.primarySport : null,
+  );
+  const choose = (item: AthleteSport) => {
+    setJustSelected(item);
+    schedule(() => {
+      update({ ...(profile.primarySport !== undefined && profile.primarySport !== item ? clearedSportSpecificAnswers() : {}), primarySport: item, primarySportAnswered: true, sport: item, sportPosition: null });
+      go(5);
+    });
+  };
   return <Question title="What is your main focus right now?" subtitle="Choose the one focus this speed profile and training week should prioritize.">
-    <View style={styles.stack}>{selected.map(item => <SelectableCard key={item} label={item === 'other' && profile.otherSportParticipation?.trim() ? profile.otherSportParticipation.trim() : sports.find(option => option.value === item)?.label ?? pretty(item)} selected={profile.primarySportAnswered === true && profile.primarySport === item} onPress={() => update({ ...(profile.primarySport !== undefined && profile.primarySport !== item ? clearedSportSpecificAnswers() : {}), primarySport: item, primarySportAnswered: true, sport: item, sportPosition: null })} />)}</View>
+    <View accessibilityRole="radiogroup" style={styles.stack}>{selected.map(item => <SelectableCard key={item} label={item === 'other' && profile.otherSportParticipation?.trim() ? profile.otherSportParticipation.trim() : sports.find(option => option.value === item)?.label ?? pretty(item)} selected={justSelected === item} disabled={pending && justSelected !== item} onPress={() => choose(item)} />)}</View>
   </Question>;
 }
 
@@ -681,53 +700,15 @@ function GoalsStep({ profile, update }: Props) {
   </Question>;
 }
 
-function SportProfileStep({ profile, update }: Props) {
+function SportProfileStep({ profile, update, go }: Props & { go: (step: number) => void }) {
   const palette = useTheme();
   const styles = useMemo(() => createStyles(palette), [palette]);
   const sport = profile.primarySport ?? profile.sport ?? 'track-and-field';
   if (sport === 'track-and-field') {
-    const range = getTrackPerformanceInputRange(profile.primaryEvent);
-    const personalBest = profile.personalBests.find(item => item.event === profile.primaryEvent)?.timeSeconds ?? null;
-    const updatePersonalBest = (time: number | null) => update({
-      personalBests: time
-        ? [...profile.personalBests.filter(item => item.event !== profile.primaryEvent), { event: profile.primaryEvent, timeSeconds: time }]
-        : profile.personalBests.filter(item => item.event !== profile.primaryEvent),
-    });
-    const updateSecondaryBest = (event: SprintEvent, time: number | null) => update({
-      personalBests: time
-        ? [...profile.personalBests.filter(item => item.event !== event), { event, timeSeconds: time }]
-        : profile.personalBests.filter(item => item.event !== event),
-    });
-    return <Question title="Your track profile" subtitle="Choose your main event and add a current best only if you know it. The time is optional.">
-      <Label text="Primary event" />
-      <View style={styles.chips}>{events.map(event => <Chip key={event} label={event} selected={profile.primaryEvent === event && Boolean(profile.sportProfileAnswered)} onPress={() => update({ primaryEvent: event, sportProfileAnswered: true, trackProfile: { primaryEvent: event, secondaryEvents: profile.secondaryEvents, personalBests: profile.personalBests, blockStartExperience: profile.blockStartExperience, nextMeetDate: profile.nextMeetDate, championshipDate: profile.championshipDate } })} />)}</View>
-      <Label text="Secondary events" />
-      <View style={styles.chips}>{events.filter(event => event !== profile.primaryEvent).map(event => <Chip key={event} label={event} selected={profile.secondaryEvents.includes(event)} onPress={() => update({ secondaryEvents: toggle(profile.secondaryEvents, event) })} />)}</View>
-      <PerformanceTimeWheel
-        key={`personal-best:${profile.primaryEvent}`}
-        label={`${profile.primaryEvent} current best`}
-        value={personalBest}
-        onChange={updatePersonalBest}
-        minimumSeconds={range.minimum}
-        maximumSeconds={range.maximum}
-        suggestedSeconds={range.suggested}
-      />
-      {profile.secondaryEvents.length ? <View style={styles.secondaryBestCard}>
-        <Label text="Secondary-event bests · optional" />
-        {profile.secondaryEvents.map(event => {
-          const secondaryRange = getTrackPerformanceInputRange(event);
-          return <PerformanceTimeWheel
-            key={`secondary-best:${event}`}
-            label={`${event} current best`}
-            value={profile.personalBests.find(item => item.event === event)?.timeSeconds ?? null}
-            onChange={time => updateSecondaryBest(event, time)}
-            minimumSeconds={secondaryRange.minimum}
-            maximumSeconds={secondaryRange.maximum}
-            suggestedSeconds={secondaryRange.suggested}
-          />;
-        })}
-      </View> : null}
-    </Question>;
+    const phase = trackProfilePhase(profile);
+    if (phase === 'events') return <TrackEventsStep profile={profile} update={update} />;
+    if (phase === 'main-event') return <TrackMainEventStep profile={profile} update={update} />;
+    return <TrackPrsStep profile={profile} update={update} onContinue={() => go(7)} />;
   }
   if (sport === 'football') {
     const item = profile.footballProfile ?? {};
@@ -819,6 +800,85 @@ function SportProfileStep({ profile, update }: Props) {
   </Question>;
 }
 
+function TrackEventsStep({ profile, update }: Props) {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
+  // While unanswered, secondaryEvents doubles as scratch storage for "every event selected so
+  // far" — primaryEvent isn't split out until a main event is actually chosen (see
+  // trackProfilePhase's doc comment above). Local state means Back into this screen always
+  // remounts fresh from whatever the profile currently holds, restoring the prior selection.
+  const [selected, setSelected] = useState<SprintEvent[]>(() => [...new Set([profile.primaryEvent, ...profile.secondaryEvents])]);
+  const toggleEvent = (event: SprintEvent) => setSelected(current => current.includes(event) ? current.filter(item => item !== event) : [...current, event]);
+  const ctaTitle = selected.length === 0 ? 'Select at least one' : selected.length === 1 ? `Continue with ${selected[0]}` : `Continue with ${selected.length} events`;
+  const confirm = () => {
+    if (!selected.length) return;
+    if (selected.length === 1) {
+      update({ primaryEvent: selected[0], secondaryEvents: [], trackEventsAnswered: true, trackMainEventAnswered: true });
+      return;
+    }
+    update({ secondaryEvents: selected, trackEventsAnswered: true, trackMainEventAnswered: false });
+  };
+  return <Question title="What do you race?" subtitle="Select every sprint event you currently race.">
+    <View style={styles.stack}>{events.map(event => <MultiSelectCard key={event} label={event} selected={selected.includes(event)} onPress={() => toggleEvent(event)} />)}</View>
+    <PrimaryOnboardingButton title={ctaTitle} disabled={selected.length === 0} onPress={confirm} />
+  </Question>;
+}
+
+function TrackMainEventStep({ profile, update }: Props) {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
+  // Per trackProfilePhase's contract, this phase only ever renders while secondaryEvents holds
+  // every selected candidate (primaryEvent isn't meaningful yet).
+  const candidates = profile.secondaryEvents;
+  const { schedule, pending } = useAutoAdvance();
+  const [justSelected, setJustSelected] = useState<SprintEvent | null>(null);
+  const choose = (event: SprintEvent) => {
+    setJustSelected(event);
+    schedule(() => update({ primaryEvent: event, secondaryEvents: candidates.filter(item => item !== event), trackMainEventAnswered: true }));
+  };
+  return <Question title="What’s your main event right now?" subtitle="Choose the one your training week should prioritize.">
+    <View accessibilityRole="radiogroup" style={styles.stack}>{candidates.map(event => <SelectableCard key={event} label={event} selected={justSelected === event} disabled={pending && justSelected !== event} onPress={() => choose(event)} />)}</View>
+  </Question>;
+}
+
+function TrackPrsStep({ profile, update, onContinue }: Props & { onContinue: () => void }) {
+  const selectedEvents = [...new Set([profile.primaryEvent, ...profile.secondaryEvents])];
+  const updateBest = (event: SprintEvent, time: number | null) => update({
+    personalBests: time
+      ? [...profile.personalBests.filter(item => item.event !== event), { event, timeSeconds: time }]
+      : profile.personalBests.filter(item => item.event !== event),
+  });
+  const confirm = () => {
+    update({
+      sportProfileAnswered: true,
+      trackProfile: {
+        primaryEvent: profile.primaryEvent,
+        secondaryEvents: profile.secondaryEvents,
+        personalBests: profile.personalBests,
+        blockStartExperience: profile.blockStartExperience,
+        nextMeetDate: profile.nextMeetDate,
+        championshipDate: profile.championshipDate,
+      },
+    });
+    onContinue();
+  };
+  return <Question title="What are your current PRs?" subtitle="Enter what you know. You can update these later.">
+    {selectedEvents.map(event => {
+      const range = getTrackPerformanceInputRange(event);
+      return <PerformanceTimeWheel
+        key={`pr:${event}`}
+        label={`${event}${selectedEvents.length > 1 && event === profile.primaryEvent ? ' · main event' : ''} current best`}
+        value={profile.personalBests.find(item => item.event === event)?.timeSeconds ?? null}
+        onChange={time => updateBest(event, time)}
+        minimumSeconds={range.minimum}
+        maximumSeconds={range.maximum}
+        suggestedSeconds={range.suggested}
+      />;
+    })}
+    <PrimaryOnboardingButton title="Continue" onPress={confirm} />
+  </Question>;
+}
+
 function TargetStep({ profile, update, onContinue }: Props & { onContinue: () => void }) {
   const palette = useTheme();
   const styles = useMemo(() => createStyles(palette), [palette]);
@@ -885,9 +945,17 @@ function TargetStep({ profile, update, onContinue }: Props & { onContinue: () =>
   </Question>;
 }
 
-function ExperienceStep({ profile, update }: Props) {
+function ExperienceStep({ profile, update, go }: Props & { go: (step: number) => void }) {
   const palette = useTheme();
   const styles = useMemo(() => createStyles(palette), [palette]);
+  const { schedule, pending } = useAutoAdvance();
+  const [justSelected, setJustSelected] = useState<AthleteExperienceLevel | null>(
+    profile.experienceAnswered ? profile.experienceLevel : null,
+  );
+  const choose = (value: AthleteExperienceLevel) => {
+    setJustSelected(value);
+    schedule(() => { update({ experienceLevel: value, experienceAnswered: true }); go(9); });
+  };
   const options: { label: string; detail: string; value: AthleteExperienceLevel }[] = [
     {
       label: 'New to structured speed training',
@@ -916,8 +984,9 @@ function ExperienceStep({ profile, update }: Props) {
         key={option.value}
         label={option.label}
         detail={option.detail}
-        selected={Boolean(profile.experienceAnswered) && profile.experienceLevel === option.value}
-        onPress={() => update({ experienceLevel: option.value, experienceAnswered: true })}
+        selected={justSelected === option.value}
+        disabled={pending && justSelected !== option.value}
+        onPress={() => choose(option.value)}
       />)}
     </View>
   </Question>;
@@ -1438,38 +1507,48 @@ function SeasonStep({ profile, update }: Props) {
     <Text style={styles.inputHelp}>You can add your complete competition calendar later.</Text>
   </Question>;
 }
-function ModeStep({ profile, update }: Props) {
+function ModeStep({ profile, update, go }: Props & { go: (step: number) => void }) {
   const palette = useTheme();
   const styles = useMemo(() => createStyles(palette), [palette]);
-  const selected = getTrainingWorkflow(profile);
-  useEffect(() => {
-    if (!profile.trainingPlanModeAnswered) {
-      update(trainingWorkflowChanges('sprintlab-plan'));
-    }
-  }, [profile.trainingPlanModeAnswered, update]);
+  const { schedule, pending } = useAutoAdvance();
+  const [justSelected, setJustSelected] = useState<TrainingWorkflow | null>(
+    profile.trainingPlanModeAnswered ? getTrainingWorkflow(profile) : null,
+  );
   const modes: { workflow: TrainingWorkflow; label: string; detail: string }[] = [
     { workflow: 'sprintlab-plan', label: 'Build a SprintLab plan', detail: 'Get an editable training week based on your goals, schedule, and equipment.' },
     { workflow: 'coach-plan', label: 'Follow my coach’s plan', detail: 'Add your coach’s sessions, then use SprintLab to schedule, complete, and analyze them.' },
     { workflow: 'combined', label: 'Combine both', detail: 'Keep coach-assigned sessions while using SprintLab recommendations to fill appropriate gaps.' },
     { workflow: 'log-only', label: 'Log without a plan', detail: 'Record workouts and track progress without creating a training calendar.' },
   ];
+  const choose = (workflow: TrainingWorkflow) => {
+    setJustSelected(workflow);
+    schedule(() => { update(trainingWorkflowChanges(workflow)); go(14); });
+  };
   return <Question title="How should SprintLab help?" subtitle="Choose how you want to organize your training. You can change this later.">
-    <View style={styles.stack}>{modes.map(mode => <SelectableCard key={mode.workflow} label={mode.label} detail={mode.detail} selected={selected === mode.workflow} onPress={() => update(trainingWorkflowChanges(mode.workflow))} />)}</View>
+    <View accessibilityRole="radiogroup" style={styles.stack}>{modes.map(mode => <SelectableCard key={mode.workflow} label={mode.label} detail={mode.detail} selected={justSelected === mode.workflow} disabled={pending && justSelected !== mode.workflow} onPress={() => choose(mode.workflow)} />)}</View>
   </Question>;
 }
-function ReminderStep({ profile, update }: Props) {
+function ReminderStep({ profile, update, go }: Props & { go: (step: number) => void }) {
   const palette = useTheme();
   const styles = useMemo(() => createStyles(palette), [palette]);
   const [customPickerRequest, setCustomPickerRequest] = useState(0);
+  const { schedule, pending } = useAutoAdvance();
+  const [justSelected, setJustSelected] = useState<'morning' | 'after-school' | 'evening' | 'none' | null>(null);
+  // Non-null once the athlete has said they *want* reminders and the OS hasn't already granted
+  // permission — switches this step to SprintLab's own explanation card. Choosing a TIME never
+  // touches the native permission API by itself; only this gate's "Enable" action does.
+  const [gateStatus, setGateStatus] = useState<NotificationPermissionStatus | null>(null);
+  const [enabling, setEnabling] = useState(false);
   const presets = [
-    { label: 'Morning', detail: '7:00 AM', hour: 7, minute: 0 },
-    { label: 'After school', detail: '4:00 PM', hour: 16, minute: 0 },
-    { label: 'Evening', detail: '6:30 PM', hour: 18, minute: 30 },
+    { key: 'morning' as const, label: 'Morning', detail: '7:00 AM', hour: 7, minute: 0 },
+    { key: 'after-school' as const, label: 'After school', detail: '4:00 PM', hour: 16, minute: 0 },
+    { key: 'evening' as const, label: 'Evening', detail: '6:30 PM', hour: 18, minute: 30 },
   ];
   const selectedTime = `${profile.workoutReminderHour ?? 16}:${profile.workoutReminderMinute ?? 0}`;
   const custom = Boolean(profile.workoutReminderCustomTime);
   const answered = Boolean(profile.workoutReminderAnswered);
   const chooseCustom = () => {
+    setJustSelected(null);
     update({
       workoutReminderEnabled: true,
       workoutReminderHour: profile.workoutReminderHour ?? 16,
@@ -1479,25 +1558,77 @@ function ReminderStep({ profile, update }: Props) {
     });
     setCustomPickerRequest(current => current + 1);
   };
+  // Presets and "no reminders" are complete answers on their own — no further input needed — so
+  // they auto-advance. "Custom time" instead reveals a time picker (an input, not a choice), so it
+  // deliberately does NOT auto-advance; a Continue button appears below once custom is selected.
+  // Neither path ever requests the native permission — that only happens from the gate below,
+  // and only from the athlete's own "Enable" tap on it.
+  const finalizeAndAdvance = async (changes: Partial<AthleteProfile>) => {
+    update(changes);
+    const merged = { ...profile, ...changes };
+    try {
+      await syncWorkoutReminders({ profile: merged });
+    } catch {
+      hapticError();
+    }
+    if (!merged.workoutReminderEnabled) { go(15); return; }
+    const status = await getNotificationPermissionStatus();
+    if (status === 'granted') { go(15); return; }
+    setGateStatus(status);
+  };
+  const choosePreset = (preset: (typeof presets)[number]) => {
+    setJustSelected(preset.key);
+    schedule(() => void finalizeAndAdvance({ workoutReminderEnabled: true, workoutReminderHour: preset.hour, workoutReminderMinute: preset.minute, workoutReminderCustomTime: false, workoutReminderAnswered: true }));
+  };
+  const chooseNone = () => {
+    setJustSelected('none');
+    schedule(() => void finalizeAndAdvance({ workoutReminderEnabled: false, workoutReminderCustomTime: false, workoutReminderAnswered: true }));
+  };
+  const enableNotifications = async () => {
+    setEnabling(true);
+    try {
+      const result = await requestNotificationPermission();
+      await setNotificationOptInDecision('enabled');
+      if (result === 'granted') await syncWorkoutReminders({ profile });
+    } catch {
+      hapticError();
+    } finally {
+      setEnabling(false);
+      go(15);
+    }
+  };
+  const notNowNotifications = async () => {
+    await setNotificationOptInDecision('not-now');
+    go(15);
+  };
+
+  if (gateStatus) {
+    return (
+      <Question title="One more thing" subtitle="SprintLab needs your permission before it can send reminders.">
+        <NotificationSetupCard
+          status={gateStatus}
+          enabling={enabling}
+          onEnable={() => void enableNotifications()}
+          onNotNow={gateStatus === 'undetermined' ? () => void notNowNotifications() : () => go(15)}
+        />
+      </Question>
+    );
+  }
+
   return (
     <Question
       title="When should Split remind you to train?"
       subtitle="On workout days, the reminder previews the session name, exercise count, and estimated time. You can change this later in Settings."
     >
-      <View style={styles.stack}>
+      <View accessibilityRole="radiogroup" style={styles.stack}>
         {presets.map(preset => (
           <SelectableCard
             key={preset.label}
             label={preset.label}
             detail={preset.detail}
-            selected={answered && Boolean(profile.workoutReminderEnabled) && !custom && selectedTime === `${preset.hour}:${preset.minute}`}
-            onPress={() => update({
-              workoutReminderEnabled: true,
-              workoutReminderHour: preset.hour,
-              workoutReminderMinute: preset.minute,
-              workoutReminderCustomTime: false,
-              workoutReminderAnswered: true,
-            })}
+            selected={justSelected === preset.key || (answered && Boolean(profile.workoutReminderEnabled) && !custom && selectedTime === `${preset.hour}:${preset.minute}`)}
+            disabled={pending && justSelected !== preset.key}
+            onPress={() => choosePreset(preset)}
           />
         ))}
         <SelectableCard
@@ -1506,17 +1637,15 @@ function ReminderStep({ profile, update }: Props) {
             ? reminderTimeLabel(profile.workoutReminderHour, profile.workoutReminderMinute)
             : 'Choose a time that fits your schedule.'}
           selected={answered && Boolean(profile.workoutReminderEnabled) && custom}
+          disabled={pending}
           onPress={chooseCustom}
         />
         <SelectableCard
           label="No workout reminders"
           detail="Keep notifications off for now."
-          selected={answered && !profile.workoutReminderEnabled}
-          onPress={() => update({
-            workoutReminderEnabled: false,
-            workoutReminderCustomTime: false,
-            workoutReminderAnswered: true,
-          })}
+          selected={justSelected === 'none' || (answered && !profile.workoutReminderEnabled && !justSelected)}
+          disabled={pending && justSelected !== 'none'}
+          onPress={chooseNone}
         />
       </View>
       {profile.workoutReminderEnabled && custom ? (
@@ -1538,6 +1667,9 @@ function ReminderStep({ profile, update }: Props) {
         <Text style={styles.reminderSummary}>
           Planned workout days at {reminderTimeLabel(profile.workoutReminderHour, profile.workoutReminderMinute)}
         </Text>
+      ) : null}
+      {profile.workoutReminderEnabled && custom ? (
+        <PrimaryOnboardingButton title="Continue" onPress={() => void finalizeAndAdvance({})} />
       ) : null}
     </Question>
   );
@@ -1572,31 +1704,102 @@ function SourcesStep() {
 }
 
 
-function RevealStep({ profile, go }: { profile: AthleteProfile; go: (step: number) => void }) {
+// Total reveal duration and stage breakpoints (as fractions of that duration) for RevealStep's
+// single Animated.Value timeline below — see that component's doc comment for why one driver.
+const REVEAL_DURATION_MS = 2100;
+
+function RevealStep({ profile, go, onContinue }: { profile: AthleteProfile; go: (step: number) => void; onContinue: () => void }) {
   const palette = useTheme();
   const styles = useMemo(() => createStyles(palette), [palette]);
-  return <Question title="Your speed profile" subtitle="Your starting setup, ready for review.">
-    <ProfileRevealCard title={profile.name.trim() || 'Athlete'}>
-      <Text style={styles.revealText}>{profileSummary(profile)}</Text>
-      <Text style={styles.revealDetail}>{classificationExplanation(profile)}</Text>
-      <ProfileRow label="Goals" value={(profile.speedGoals ?? []).map(pretty).join(' · ') || 'Not selected'} />
-      <ProfileRow label="Training" value={profile.availableTrainingDays.length ? profile.availableTrainingDays.map(day => day.slice(0, 3)).join(', ') : `${profile.trainingDaysPerWeek} days each week`} />
-      <ProfileRow label="Preferred rest" value={profile.preferredRestDayAnswered ? pretty(profile.preferredRestDay) : 'No preference'} />
-    </ProfileRevealCard>
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel="Edit onboarding answers"
-      onPress={() => go(3)}
-      style={({ pressed }) => [styles.revealEdit, pressed && styles.revealEditPressed]}
-    >
-      <MaterialIcons name="edit" size={14} color={palette.muted} />
-      <Text style={styles.revealEditText}>Edit answers</Text>
-    </Pressable>
-  </Question>;
+  const [ctaReady, setCtaReady] = useState(false);
+  // One driver for the whole sequence rather than a separate Animated.Value per element: each
+  // stage below just interpolates a different slice of the same 0->1 timeline, which keeps the
+  // ~2s choreography (sweep -> badge -> hero -> events -> priorities, staggered -> footer -> CTA)
+  // easy to read and re-time in one place instead of coordinating N independent animations.
+  const timeline = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(timeline, { toValue: 1, duration: REVEAL_DURATION_MS, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    const haptic = setTimeout(completeStep, 0.2 * REVEAL_DURATION_MS);
+    const ready = setTimeout(() => setCtaReady(true), REVEAL_DURATION_MS);
+    return () => { clearTimeout(haptic); clearTimeout(ready); };
+  }, [timeline]);
+
+  const stage = (start: number, end: number, riseBy = 8) => ({
+    opacity: timeline.interpolate({ inputRange: [start, end], outputRange: [0, 1], extrapolate: 'clamp' as const }),
+    transform: [{ translateY: timeline.interpolate({ inputRange: [start, end], outputRange: [riseBy, 0], extrapolate: 'clamp' as const }) }],
+  });
+  const sweepOpacity = timeline.interpolate({ inputRange: [0, 0.03, 0.08, 0.15], outputRange: [0, 1, 1, 0], extrapolate: 'clamp' });
+  const heroScale = timeline.interpolate({ inputRange: [0.2, 0.34], outputRange: [0.94, 1], extrapolate: 'clamp' });
+
+  const classification = speedClassificationLabel(profile);
+  const goals = (profile.speedGoals ?? []).slice(0, 4);
+
+  return <View style={styles.revealScreen}>
+    <Animated.View pointerEvents="none" style={[styles.revealSweep, { opacity: sweepOpacity }]} />
+    <SplitGuide speech="I’ve got your speed profile." pose="celebration" compact />
+
+    <Animated.View style={stage(0.12, 0.22)}>
+      <View style={styles.revealEyebrowRow}>
+        <Text style={styles.revealEyebrow}>{possessiveTitle(profile, 'SPEED PROFILE', 'YOUR SPEED PROFILE').toUpperCase()}</Text>
+        <View style={styles.revealBadge}>
+          <MaterialIcons name="bolt" size={11} color={palette.accent} />
+          <Text style={styles.revealBadgeText}>PROFILE BUILT</Text>
+        </View>
+      </View>
+    </Animated.View>
+
+    <Animated.View style={stage(0.2, 0.34)}>
+      <Animated.Text style={[styles.revealHero, { transform: [{ scale: heroScale }] }]}>{classification.title}</Animated.Text>
+    </Animated.View>
+
+    {classification.eventLine ? <Animated.View style={stage(0.32, 0.42)}>
+      <Text style={styles.revealEventLine}>{classification.eventLine}</Text>
+    </Animated.View> : null}
+
+    {goals.length ? <Animated.View style={[styles.priorityCard, stage(0.4, 0.46)]}>
+      <Text style={styles.priorityCardHeading}>DEVELOPMENT PRIORITIES</Text>
+      {goals.map((goal, index) => {
+        const meta = SPEED_GOAL_LIBRARY[goal];
+        return <Animated.View key={goal} style={[styles.revealPriorityRow, stage(0.46 + index * 0.05, 0.55 + index * 0.05, 10)]}>
+          <View style={styles.priorityIcon}><MaterialIcons name={SPEED_GOAL_ICONS[goal]} size={17} color={palette.accent} /></View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.priorityRowLabel}>{meta.label}</Text>
+            <Text style={styles.priorityRowDetail}>{meta.detail}</Text>
+          </View>
+        </Animated.View>;
+      })}
+      <Animated.View style={[styles.priorityInterpretation, stage(0.72, 0.85)]}>
+        <Text style={styles.revealDetail}>{classificationExplanation(profile)}</Text>
+        <View style={styles.priorityFooterRow}>
+          <View style={styles.priorityFooterColumn}>
+            <View style={styles.priorityFooterLabelRow}><MaterialIcons name="event-available" size={13} color={palette.muted} /><Text style={styles.priorityFooterLabel}>TRAINING CAPACITY</Text></View>
+            <Text style={styles.priorityFooterValue}>{profile.trainingDaysPerWeek} days / week</Text>
+          </View>
+          <View style={styles.priorityFooterColumn}>
+            <View style={styles.priorityFooterLabelRow}><MaterialIcons name="self-improvement" size={13} color={palette.muted} /><Text style={styles.priorityFooterLabel}>REST DAY</Text></View>
+            <Text style={styles.priorityFooterValue}>{profile.preferredRestDayAnswered ? pretty(profile.preferredRestDay) : 'Flexible'}</Text>
+          </View>
+        </View>
+      </Animated.View>
+    </Animated.View> : null}
+
+    <Animated.View style={stage(0.88, 1)}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Edit onboarding answers"
+        disabled={!ctaReady}
+        onPress={() => go(3)}
+        style={({ pressed }) => [styles.revealEdit, pressed && styles.revealEditPressed]}
+      >
+        <MaterialIcons name="edit" size={14} color={palette.muted} />
+        <Text style={styles.revealEditText}>Edit answers</Text>
+      </Pressable>
+      <PrimaryOnboardingButton title="Continue to my week" disabled={!ctaReady} onPress={onContinue} />
+    </Animated.View>
+  </View>;
 }
 
 function DayChooser({ title, days, onChange }: { title: string; days: TrainingDay[]; onChange: (days: TrainingDay[]) => void }) { const palette = useTheme(); const styles = useMemo(() => createStyles(palette), [palette]); return <View style={styles.dayChooser}><Label text={title} /><View style={styles.chips}>{weekdays.map(day => <Chip key={day} label={day.slice(0, 3)} selected={days.includes(day)} onPress={() => onChange(toggle(days, day))} />)}</View></View>; }
-function ProfileRow({ label, value }: { label: string; value: string }) { const palette = useTheme(); const styles = useMemo(() => createStyles(palette), [palette]); return <View style={styles.profileRow}><Text style={styles.profileLabel}>{label}</Text><Text style={styles.profileValue}>{value}</Text></View>; }
 function Label({ text }: { text: string }) { const palette = useTheme(); const styles = useMemo(() => createStyles(palette), [palette]); return <Text style={styles.label}>{text}</Text>; }
 function Chip({ label, selected, disabled = false, onPress }: { label: string; selected: boolean; disabled?: boolean; onPress: () => void }) { const palette = useTheme(); const styles = useMemo(() => createStyles(palette), [palette]); return <Pressable accessibilityRole="button" accessibilityState={{ selected, disabled }} disabled={disabled} onPress={onPress} style={[styles.chip, selected && styles.chipSelected, disabled && styles.chipDisabled]}><Text style={[styles.chipText, selected && styles.chipTextSelected, disabled && styles.chipTextDisabled]}>{label}</Text></Pressable>; }
 type Props = { profile: AthleteProfile; update: (value: Partial<AthleteProfile>) => void };
@@ -1763,14 +1966,30 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   commitmentPledge: { color: palette.text, fontSize: 19, lineHeight: 28, fontWeight: '800', maxWidth: 560 },
   commitmentSignature: { color: palette.muted, fontSize: 14, lineHeight: 20, fontWeight: '800' },
   reminderSummary: { color: palette.accent, fontSize: 13, lineHeight: 19, fontWeight: '900', textAlign: 'center', paddingTop: 4 },
-  revealText: { color: palette.text, fontSize: 16, lineHeight: 23, fontWeight: '800' },
-  revealDetail: { color: palette.muted, fontSize: 13, lineHeight: 18 },
-  revealEdit: { minHeight: 44, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 12, borderRadius: 12 },
+  revealDetail: { color: palette.muted, fontSize: 13, lineHeight: 19 },
+  revealEdit: { minHeight: 44, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 12, borderRadius: 12, marginBottom: 10 },
   revealEditPressed: { backgroundColor: palette.surface2 },
   revealEditText: { color: palette.muted, fontSize: 12, lineHeight: 16, fontWeight: '800' },
-  profileRow: { gap: 3, borderTopWidth: 1, borderTopColor: palette.border, paddingTop: 8 },
-  profileLabel: { color: palette.muted, fontSize: 10, fontWeight: '900', textTransform: 'capitalize', letterSpacing: 0.8 },
-  profileValue: { color: palette.text, fontSize: 13, lineHeight: 18, fontWeight: '700' },
+  revealScreen: { flex: 1, gap: 18, paddingBottom: 8 },
+  revealSweep: { position: 'absolute', top: -4, left: 0, right: 0, height: 2, borderRadius: 1, backgroundColor: palette.accent },
+  revealEyebrowRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  revealEyebrow: { color: palette.muted, fontSize: 12, fontWeight: '900', letterSpacing: 2 },
+  revealBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(201,255,24,0.4)', backgroundColor: palette.accentDark },
+  revealBadgeText: { color: palette.accent, fontSize: 10, fontWeight: '900', letterSpacing: 0.6 },
+  revealHero: { color: palette.text, fontSize: 44, lineHeight: 48, fontWeight: '900', letterSpacing: -1 },
+  revealEventLine: { color: palette.accent, fontSize: 13, fontWeight: '900', letterSpacing: 1.5 },
+  priorityCard: { gap: 14, borderWidth: 1, borderColor: palette.border, borderRadius: 20, backgroundColor: palette.surface, padding: 18 },
+  priorityCardHeading: { color: palette.muted, fontSize: 11, fontWeight: '900', letterSpacing: 1.4 },
+  revealPriorityRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  priorityIcon: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.accentDark },
+  priorityRowLabel: { color: palette.text, fontSize: 14, fontWeight: '800' },
+  priorityRowDetail: { color: palette.muted, fontSize: 12, lineHeight: 16, marginTop: 1 },
+  priorityInterpretation: { gap: 14, borderTopWidth: 1, borderTopColor: palette.border, paddingTop: 14 },
+  priorityFooterRow: { flexDirection: 'row', gap: 20 },
+  priorityFooterColumn: { flex: 1, gap: 4 },
+  priorityFooterLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  priorityFooterLabel: { color: palette.muted, fontSize: 10, fontWeight: '900', letterSpacing: 0.8 },
+  priorityFooterValue: { color: palette.text, fontSize: 14, fontWeight: '800' },
   dayChooser: { gap: 8, paddingTop: 4 },
   timeRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   timeColon: { color: palette.text, fontSize: 26, fontWeight: '900' },

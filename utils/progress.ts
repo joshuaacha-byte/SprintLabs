@@ -13,7 +13,12 @@ export type WeekDayStatus =
   | 'missed'
   | 'rest'
   | 'today'
-  | 'upcoming';
+  | 'upcoming'
+  /** No planned session was due (rest/open day), but an extra/unplanned session was logged
+   * anyway. Shown distinctly from 'rest' for visibility — it never counts toward the Plan Streak
+   * or plan-consistency percentage, both of which only recognize sessions linked to a scheduled
+   * workout day (see utils/streaks.ts). */
+  | 'extra';
 
 export type WeekDayProgress = {
   date: string;
@@ -160,7 +165,11 @@ export function buildTrainingVolumeSummary(
   });
 }
 
-function sessionsForDate(sessions: CompletedWorkoutSession[], date: string) {
+/** The single definition of "which completed sessions belong to this date" — reused by
+ * buildWeeklyProgress/buildScheduledSessionStreak below and by app/(tabs)/index.tsx's Today
+ * screen, so "has today's workout already been completed?" is answered the same way everywhere
+ * rather than via a second, separately-tracked completion flag. */
+export function sessionsForDate(sessions: CompletedWorkoutSession[], date: string) {
   return sessions.filter(session => sessionDateKey(session) === date);
 }
 
@@ -203,7 +212,7 @@ export function buildWeeklyProgress(
     const isToday = dateKey === todayKey;
     let status: WeekDayStatus;
 
-    if (!scheduled || scheduled.kind === 'rest') status = 'rest';
+    if (!scheduled || scheduled.kind === 'rest') status = daySessions.some(session => session.review.completed) ? 'extra' : 'rest';
     else if (hasCompleted) status = 'completed';
     else if (hasPartial) status = 'partial';
     else if (isFuture) status = 'upcoming';
@@ -234,31 +243,6 @@ export function buildWeeklyProgress(
     due: dueDays.length,
     percentage: dueDays.length ? Math.round((completed / dueDays.length) * 100) : 0,
   };
-}
-
-export function buildScheduledSessionStreak(
-  schedule: ScheduledDay[],
-  sessions: CompletedWorkoutSession[],
-  now = new Date(),
-  lookbackDays = 56,
-  history: ScheduleHistoryEntry[] = [],
-) {
-  const todayKey = toLocalDateKey(now);
-  let streak = 0;
-
-  for (let offset = 0; offset < lookbackDays; offset += 1) {
-    const date = addDays(new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12), -offset);
-    const dateKey = toLocalDateKey(date);
-    const scheduled = scheduleForDate(schedule, history, date);
-    if (!scheduled || scheduled.kind === 'rest') continue;
-    const completed = sessionsForDate(sessions, dateKey).some(session => session.review.completed);
-
-    if (dateKey === todayKey && !completed) continue;
-    if (!completed) break;
-    streak += 1;
-  }
-
-  return streak;
 }
 
 function plannedExercise(session: CompletedWorkoutSession, exerciseId: string) {

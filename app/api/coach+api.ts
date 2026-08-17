@@ -1,5 +1,6 @@
 import { createGeminiClient, findKnowledgeStoreName, GEMINI_MODEL } from '@/utils/gemini';
 import { COACH_RESPONSE_JSON_SCHEMA, PLAN_CHANGE_TYPES, type CoachResponsePayload } from '@/types/ai-plan-change';
+import { COACH_ACTION_TYPES, type CoachAction } from '@/types/coach-action';
 
 // SprintLab Intelligence I-2: /api/coach now returns structured JSON so Gemini can either
 // answer normally or attach one typed plan-change proposal (see types/ai-plan-change.ts).
@@ -15,12 +16,19 @@ const SYSTEM_INSTRUCTION = [
   'SprintLab\'s deterministic planner rules are a strong baseline, not an absolute ceiling, unless they represent a genuine safety or data-integrity constraint — explain any meaningful deviation from that baseline.',
   'The message may include COACH UI CONTEXT (which SprintLab screen the athlete opened Coach from, and an entity such as a specific workout if one was in view) and a RECENT CONVERSATION transcript. Use both to understand short follow-ups like "why not Saturday instead?" without asking the athlete to repeat themselves — but the transcript is a bounded recent window, not the full conversation history, so do not assume anything said earlier than what is shown.',
   'The message may include a SPLIT NOTICED line: a single local, deterministic signal SprintLab detected from the athlete\'s own data (e.g. a missed session, an unusually demanding session, lower readiness) that is why Split proactively has the athlete\'s attention right now. Treat it as a hint about what the athlete likely wants to discuss, not as a directive — it never determines your answer or forces a proposal on its own.',
-  'You must always respond with the given JSON schema: {"message": string, "proposal": object|null}.',
-  '"message" is your normal explanatory answer to the athlete. Write it for most questions; leave "proposal" null.',
+  'You must always respond with the given JSON schema: {"message": string, "proposal": object|null, "action": object|null}.',
+  '"message" is your normal explanatory answer to the athlete. Write it for most questions; leave "proposal" and "action" null.',
+  'RESPONSE STYLE for "message": default to concise, conversational answers — most normal responses should be roughly 2-5 short paragraphs or a few short bullets. Lead with the most useful conclusion rather than a long preamble. Do not produce a formal report unless the athlete explicitly asks for a detailed analysis, breakdown, or full review. Avoid unnecessary numbered sections like "1. Training Adherence", "2. Recovery" for ordinary questions. Do not repeat athlete data just to prove you have it — mention only the athlete data that materially affects the answer. Prefer plain, direct coaching language over academic or clinical wording, and do not over-explain basic sprint concepts unless asked. Markdown is allowed for useful emphasis or short bullet lists, but do not use headings or report-style formatting for ordinary answers.',
+  'For example, instead of "Here is an honest, objective breakdown of your week based on your logged data...", prefer "You\'ve missed most of this week\'s work, so I wouldn\'t try to cram it all into today." Instead of a "### 2. Readiness & Recovery / Missing Data: There are currently no readiness scores..." section, prefer "I don\'t have a readiness check from today, so before changing the session: how are your legs feeling?"',
+  'If information that materially changes the recommendation is missing, briefly say what is missing and ask ONE useful follow-up question — do not ask a follow-up if the existing context is already enough to answer confidently. When the athlete explicitly asks for more detail — "go deeper", "break it down", "analyze this", "why exactly", a full breakdown, or a detailed explanation — the concise default no longer applies: give a longer, more thorough answer and do not artificially cap useful detail just to stay short. Even then, keep it structured and readable (clear paragraphs, headings, or bullets where they aid scanning) rather than verbose for its own sake. Concision should never remove safety-relevant nuance or important warnings, and never manufacture certainty you don\'t have.',
   `Only set "proposal" when a concrete change to a specific future plan day is clearly warranted (a missed session, a schedule conflict, a fatigue/soreness pattern, an explicit athlete request to change the plan). Its "type" must be exactly one of: ${PLAN_CHANGE_TYPES.join(', ')}.`,
   'A proposal never targets a date before today, and never targets a date SprintLab already has completed training history for — you cannot see history for dates outside what the athlete context provides, so when unsure, do not propose a change to that date.',
   '"workoutId" in a proposal must be the id of the workout currently scheduled on "date" as given in the athlete context, so SprintLab can confirm nothing has changed since you generated the proposal.',
+  'The athlete context includes "libraryCandidates": a small, pre-retrieved list of real Approved Workout Library sessions relevant to today\'s session and this athlete (id, name, category, duration, equipment, surface, purpose) — not the full library. For "replace_workout" or "change_workout_variant", "newWorkoutId" must be the id of one of these candidates. If none of them fit what the athlete is asking for, do not invent a different id — explain in "message" that you don\'t have a suitable Library match rather than guessing one.',
   'You cannot modify the athlete\'s plan yourself. A proposal is only a suggestion; SprintLab validates it and the athlete must explicitly approve it before anything is saved.',
+  `"action", if set, must be exactly one of these known SprintLab workflows: ${COACH_ACTION_TYPES.join(', ')}. This is a request for SprintLab to show a card that opens an existing in-app screen — you are never given a route or URL to return, and you cannot invent one; "action" only ever carries its type and, for a few types, one small supporting field (workoutId for view_workout, date for log_session, field for update_profile). SprintLab independently re-validates whatever you return against live data before showing anything, so an unresolvable action simply falls back to your plain text.`,
+  'Use "action" only when the athlete would genuinely benefit from entering that existing workflow right now, and only when you can identify the specific real entity involved from the given context — never invent a workoutId, date, or profile field. Guidance: today\'s readiness is missing and it materially affects your recommendation -> complete_readiness. You are discussing a specific real workout (its id is available from context, e.g. the workout the athlete is currently viewing) and its details matter -> view_workout. The athlete is ready to perform today\'s real scheduled session -> start_workout. A real, specific past session was not logged and that missing information matters -> log_session. Several schedule issues need broader review rather than one specific fix -> review_week. Important structured athlete data is missing from their profile -> update_profile.',
+  'Do not force "action" into every response, and do not return it merely to make the reply feel interactive — most responses should leave it null. If a required entity (a workout id, a specific date) cannot be identified from the given context, use plain text instead of guessing. Never set both "proposal" and "action" in the same response — if a concrete plan change is warranted, return the proposal and leave "action" null.',
 ].join(' ');
 
 const MAX_MESSAGE_LENGTH = 2000;
@@ -97,16 +105,61 @@ function validateContext(context: unknown): { ok: true; json: string | null } | 
 /** Shallow shape-check only — this is Gemini's own output, not athlete data. Full plan-state
  * validation happens on-device in utils/plan-change-validator.ts, which is the layer that
  * actually protects storage integrity. */
-function sanitizeCoachPayload(raw: unknown): CoachResponsePayload | null {
-  if (typeof raw !== 'object' || raw === null) return null;
-  const { message, proposal } = raw as Record<string, unknown>;
-  if (typeof message !== 'string') return null;
-  if (proposal === null || proposal === undefined) return { message, proposal: null };
-  if (typeof proposal !== 'object') return null;
+function sanitizeCoachProposal(proposal: unknown): CoachResponsePayload['proposal'] | undefined {
+  if (proposal === null || proposal === undefined) return null;
+  if (typeof proposal !== 'object') return undefined;
   const candidate = proposal as Record<string, unknown>;
-  if (typeof candidate.type !== 'string' || !PLAN_CHANGE_TYPES.includes(candidate.type as never)) return null;
-  if (typeof candidate.date !== 'string' || typeof candidate.reason !== 'string') return null;
-  return { message, proposal: candidate as CoachResponsePayload['proposal'] };
+  if (typeof candidate.type !== 'string' || !PLAN_CHANGE_TYPES.includes(candidate.type as never)) return undefined;
+  if (typeof candidate.date !== 'string' || typeof candidate.reason !== 'string') return undefined;
+  return candidate as CoachResponsePayload['proposal'];
+}
+
+/** Shallow shape-check only, same trust level as the proposal above — this is a REQUEST for a
+ * card, never unquestioned truth. Real resolution/validation against live storage happens
+ * client-side in utils/coach-actions-resolve.ts before anything renders as tappable. `type` is
+ * strictly allowlisted (COACH_ACTION_TYPES) — there is no field here that could ever carry an
+ * arbitrary route or URL. */
+function sanitizeCoachAction(action: unknown): CoachAction | null | undefined {
+  if (action === null || action === undefined) return null;
+  if (typeof action !== 'object') return undefined;
+  const candidate = action as Record<string, unknown>;
+  if (typeof candidate.type !== 'string' || !COACH_ACTION_TYPES.includes(candidate.type as never)) return undefined;
+  switch (candidate.type) {
+    case 'view_workout':
+      if (typeof candidate.workoutId !== 'string' || !candidate.workoutId.trim()) return undefined;
+      return { type: 'view_workout', workoutId: candidate.workoutId };
+    case 'log_session':
+      return { type: 'log_session', date: typeof candidate.date === 'string' ? candidate.date : undefined };
+    case 'update_profile':
+      return { type: 'update_profile', field: typeof candidate.field === 'string' ? candidate.field : undefined };
+    case 'complete_readiness':
+    case 'start_workout':
+    case 'review_week':
+      return { type: candidate.type };
+    default:
+      return undefined;
+  }
+}
+
+/** Combines the two sanitizers and enforces the single-card rule: a valid proposal always wins,
+ * so the client only ever has to render one primary card per response (see the module doc on
+ * CoachResponsePayload in types/ai-plan-change.ts). Exported (despite this being a route file)
+ * because it — like sanitizeCoachAction above — is pure sync shape-checking with zero
+ * AsyncStorage/network dependency, so scripts/verify-coach-actions.ts can exercise the real
+ * single-card-precedence and malformed-action-rejection logic under plain Node rather than just
+ * asserting the property by inspection. */
+export function sanitizeCoachPayload(raw: unknown): CoachResponsePayload | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const { message, proposal, action } = raw as Record<string, unknown>;
+  if (typeof message !== 'string') return null;
+
+  const sanitizedProposal = sanitizeCoachProposal(proposal);
+  if (sanitizedProposal === undefined) return null;
+  if (sanitizedProposal) return { message, proposal: sanitizedProposal, action: null };
+
+  const sanitizedAction = sanitizeCoachAction(action);
+  if (sanitizedAction === undefined) return null;
+  return { message, proposal: null, action: sanitizedAction };
 }
 
 export async function POST(request: Request) {

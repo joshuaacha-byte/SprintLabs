@@ -8,9 +8,11 @@ import { Palette, useTheme } from '@/constants/sprintlab';
 import type { AthleteProfile, CompletedWorkoutSession, ScheduledDay, SprintEvent, TrainingLog, WorkoutCategory, WorkoutCompletionStatus } from '@/types';
 import { getAthleteProfile } from '@/utils/athlete-profile';
 import { deriveSeasonPhase } from '@/utils/season-engine';
-import { buildScheduledSessionStreak, buildSprintSeries, buildWeeklyProgress, ScheduleHistoryEntry } from '@/utils/progress';
+import { buildSprintSeries, buildWeeklyProgress, ScheduleHistoryEntry } from '@/utils/progress';
 import { getCompletedWorkoutSessions, getScheduleHistory, getTrainingLogs, getWeekSchedule } from '@/utils/storage';
+import { calculatePlanStreak } from '@/utils/streaks';
 import {
+  completionStatusDisplay,
   completionStatusLabels,
   defaultHistoryFilters,
   filterTrainingLogs,
@@ -59,7 +61,7 @@ export default function HistoryScreen() {
   const hasFilters = Object.entries(filters).some(([key, value]) => key !== 'query' && value !== '');
 
   const weekly = useMemo(() => buildWeeklyProgress(schedule, sessions, new Date(), scheduleHistory), [schedule, sessions, scheduleHistory]);
-  const streak = useMemo(() => buildScheduledSessionStreak(schedule, sessions, new Date(), 56, scheduleHistory), [schedule, sessions, scheduleHistory]);
+  const streak = useMemo(() => calculatePlanStreak(schedule, sessions, new Date(), scheduleHistory), [schedule, sessions, scheduleHistory]);
   const season = athlete ? deriveSeasonPhase(athlete) : null;
   const bestSeries = useMemo(() => {
     const series = buildSprintSeries(sessions);
@@ -86,7 +88,7 @@ export default function HistoryScreen() {
       <View style={styles.storyRow}>
         <View style={styles.storyMetric}><Text style={styles.storyValue}>{weekly.completed}/{weekly.due}</Text><Text style={styles.storyLabel}>This week</Text></View>
         <View style={styles.storyDivider} />
-        <View style={styles.storyMetric}><Text style={styles.storyValue}>{streak}</Text><Text style={styles.storyLabel}>Training rhythm</Text></View>
+        <View style={styles.storyMetric}><Text style={styles.storyValue}>{streak}</Text><Text style={styles.storyLabel}>Plan Streak</Text></View>
         {season ? <><View style={styles.storyDivider} /><View style={styles.storyMetric}><Text style={styles.storyValue} numberOfLines={1} adjustsFontSizeToFit>{season.phase.replaceAll('-', ' ')}</Text><Text style={styles.storyLabel}>Phase</Text></View></> : null}
       </View>
       {takeaway ? <Text style={styles.storyTakeaway}>{takeaway}</Text> : null}
@@ -123,7 +125,7 @@ function HistoryRow({ log, onPress }: { log: TrainingLog; onPress: () => void })
   const sprint = keySprintResult(log);
   const soreness = sorenessIndicator(log);
   const completed = log.completionStatus.startsWith('completed');
-  return <Pressable onPress={onPress}><Card style={styles.logCard}><View style={styles.logTop}><View style={[styles.statusDot, completed ? styles.statusComplete : styles.statusPartial]} /><View style={{ flex: 1 }}><Text style={styles.date}>{readableDate(log.date)}</Text><Text style={styles.workoutName}>{log.plannedWorkout.name}</Text></View><MaterialIcons name="chevron-right" size={22} color={palette.muted} /></View><View style={styles.metaRow}><Text style={styles.category}>{workoutCategoryLabels[log.plannedWorkout.trainingCategory]}</Text><Text style={[styles.completion, completed ? styles.completeText : styles.partialText]}>{completionStatusLabels[log.completionStatus]}</Text></View><View style={styles.metrics}><Metric label="RPE" value={log.sessionRpe ? `${log.sessionRpe}/10` : '—'} /><Metric label="Best sprint" value={sprint ?? '—'} /><Metric label="Soreness" value={soreness.label} tone={soreness.level} /></View></Card></Pressable>;
+  return <Pressable onPress={onPress}><Card style={styles.logCard}><View style={styles.logTop}><View style={[styles.statusDot, completed ? styles.statusComplete : styles.statusPartial]} /><View style={{ flex: 1 }}><Text style={styles.date}>{readableDate(log.date)}</Text><Text style={styles.workoutName}>{log.plannedWorkout.name}</Text></View><MaterialIcons name="chevron-right" size={22} color={palette.muted} /></View><View style={styles.metaRow}><Text style={styles.category}>{workoutCategoryLabels[log.plannedWorkout.trainingCategory]}</Text><Text style={[styles.completion, completed ? styles.completeText : styles.partialText]}>{completionStatusDisplay(log)}</Text></View><View style={styles.metrics}><Metric label="RPE" value={log.sessionRpe ? `${log.sessionRpe}/10` : '—'} /><Metric label="Best sprint" value={sprint ?? '—'} /><Metric label="Soreness" value={soreness.label} tone={soreness.level} /></View></Card></Pressable>;
 }
 
 function Metric({ label, value, tone }: { label: string; value: string; tone?: 'low' | 'moderate' | 'high' | 'unknown' }) {

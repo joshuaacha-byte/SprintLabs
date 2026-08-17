@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Card, Eyebrow, PrimaryButton, ScreenTitle } from '@/components/sprint-ui';
+import { sectionIconName } from '@/utils/workout-icons';
 import { Palette, useTheme } from '@/constants/sprintlab';
 import { createBlankWorkout, exerciseSuggestions, todayWorkout, weekdayLabels } from '@/data/workouts';
 import type {
@@ -38,15 +39,6 @@ const sectionAliases: Record<string, string> = {
   Track: 'Sprinting',
   'Sprint work': 'Sprinting',
   'Core / bodyweight': 'Conditioning',
-};
-
-const sectionIcon: Record<string, React.ComponentProps<typeof MaterialIcons>['name']> = {
-  'Warm-up': 'directions-walk',
-  Sprinting: 'speed',
-  Plyometrics: 'keyboard-double-arrow-up',
-  Strength: 'fitness-center',
-  Conditioning: 'monitor-heart',
-  Cooldown: 'self-improvement',
 };
 
 const createWorkoutName = () => `${new Date().toLocaleDateString(undefined, { weekday: 'long' })} workout`;
@@ -356,7 +348,7 @@ export default function WorkoutBuilderScreen() {
     </View>
 
     <SelectionModal visible={picker !== null} title={picker === 'section' ? 'Add workout section' : picker === 'library' ? 'Workout library' : 'Recent workouts'} onClose={() => { tap(); setPicker(null); }} styles={styles} palette={palette}>
-      {picker === 'section' ? sectionOptions.filter(title => !visibleSections.includes(title)).map(title => <PickerRow key={title} icon={sectionIcon[title]} title={title} onPress={() => addSection(title)} styles={styles} palette={palette} />) : null}
+      {picker === 'section' ? sectionOptions.filter(title => !visibleSections.includes(title)).map(title => <PickerRow key={title} icon={sectionIconName(title)} title={title} onPress={() => addSection(title)} styles={styles} palette={palette} />) : null}
       {picker === 'library' ? libraryWorkouts.map(item => <PickerRow key={item.id} icon="menu-book" title={item.name} copy={`${item.primaryCategory.replaceAll('-', ' ')} · ${item.metrics.estimatedDurationMinutes[0]}–${item.metrics.estimatedDurationMinutes[1]} min`} onPress={() => importWorkout(libraryWorkoutToPlannedWorkout(item))} styles={styles} palette={palette} />) : null}
       {picker === 'library' && !libraryWorkouts.length ? <Text style={styles.modalEmpty}>No approved library workouts are available.</Text> : null}
       {picker === 'recent' ? recentLogs.map(log => <PickerRow key={log.id} icon="history" title={log.plannedWorkout.name} copy={new Date(`${log.date.slice(0, 10)}T12:00:00`).toLocaleDateString()} onPress={() => importWorkout(workoutToPlannedSnapshot(log))} styles={styles} palette={palette} />) : null}

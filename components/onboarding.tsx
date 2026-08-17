@@ -324,7 +324,27 @@ export function CommitmentHoldButton({
   </View>;
 }
 
-export function ProfileRevealCard({ title, children }: PropsWithChildren<{ title: string }>) { const palette = useTheme(); const styles = useMemo(() => createStyles(palette), [palette]); return <View style={styles.reveal}><Text style={styles.revealTitle}>{title}</Text>{children}</View>; }
+/**
+ * SprintLab Onboarding V3: the single shared primitive behind every auto-advancing single-choice
+ * screen (see app/profile.tsx). Tapping an answer shows its selected state immediately (the
+ * caller's own selected-card styling), then this schedules the actual navigation a short beat
+ * later so the tap reads as acknowledged rather than abrupt. Returns a `schedule` function to
+ * call from an option's onPress, plus `pending` (true once a selection is scheduled) so the
+ * caller can disable the row of options and prevent a second tap from re-triggering — or
+ * skipping ahead an extra screen — during the brief window before navigation fires.
+ */
+export function useAutoAdvance(delay = 320) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [pending, setPending] = useState(false);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  const schedule = (onAdvance: () => void) => {
+    if (timer.current) return; // already scheduled — ignore a fast double-tap rather than restacking
+    tap();
+    setPending(true);
+    timer.current = setTimeout(onAdvance, delay);
+  };
+  return { schedule, pending };
+}
 
 const createStyles = (palette: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.bg, overflow: 'hidden' },
@@ -368,5 +388,4 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   holdText: { color: palette.text, fontWeight: '900', fontSize: 15, opacity: 1 },
   holdContentActive: { color: '#080D12', opacity: 1 },
   holdCompletionHint: { color: palette.accent, fontSize: 13, lineHeight: 18, fontWeight: '900', textAlign: 'center' },
-  reveal: { gap: 12, backgroundColor: palette.surface, borderColor: palette.border, borderRadius: 18, borderWidth: 1, padding: 16 }, revealTitle: { color: palette.accent, fontSize: 12, fontWeight: '900', letterSpacing: 1.2, textTransform: 'capitalize' },
 });

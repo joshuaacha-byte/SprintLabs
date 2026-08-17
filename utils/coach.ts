@@ -59,7 +59,7 @@ export type ProposalDisplay = {
   toLabel: string;
 };
 
-function weekdayLabelForDate(date: string): string {
+export function weekdayLabelForDate(date: string): string {
   const parsed = new Date(`${date}T00:00:00`);
   if (Number.isNaN(parsed.getTime())) return date;
   return weekdayLabels[parsed.getDay() as WeekdayIndex]?.full ?? date;

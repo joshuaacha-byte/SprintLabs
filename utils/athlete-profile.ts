@@ -7,6 +7,35 @@ const ONBOARDING_KEY = 'sprintlab.athlete-onboarding.v1';
 
 export type TrainingWorkflow = 'sprintlab-plan' | 'coach-plan' | 'combined' | 'log-only';
 
+/**
+ * SprintLab's one shared source of "what do we call this athlete" — every screen that wants a
+ * first name, an avatar initial, or a possessive title ("Joshua's Speed Profile") should read
+ * from here rather than re-deriving `.trim().split(' ')[0]` locally, so a missing/blank name is
+ * handled the same safe way everywhere.
+ */
+export function athleteFirstName(profile: Pick<AthleteProfile, 'name'> | null | undefined): string | null {
+  const first = profile?.name?.trim().split(/\s+/)[0];
+  return first || null;
+}
+
+export function athleteInitial(profile: Pick<AthleteProfile, 'name'> | null | undefined, fallback = 'S'): string {
+  const first = athleteFirstName(profile);
+  return first ? first.slice(0, 1).toUpperCase() : fallback;
+}
+
+/** "Joshua" → "Joshua's", "James" → "James'" — the two English possessive forms that matter for a
+ * first name. */
+export function possessive(name: string): string {
+  return /s$/i.test(name) ? `${name}’` : `${name}’s`;
+}
+
+/** e.g. possessiveTitle(profile, 'Speed Profile') → "Joshua's Speed Profile", or the given
+ * fallback (default "Your Speed Profile") when no name is available. */
+export function possessiveTitle(profile: Pick<AthleteProfile, 'name'> | null | undefined, noun: string, fallback?: string): string {
+  const first = athleteFirstName(profile);
+  return first ? `${possessive(first)} ${noun}` : (fallback ?? `Your ${noun}`);
+}
+
 export function getTrainingWorkflow(
   profile: Pick<AthleteProfile, 'trainingPlanMode' | 'trainingPlanModeAnswered' | 'loggingOnlyMode' | 'followsCoachCreatedPlan'>,
 ): TrainingWorkflow | null {

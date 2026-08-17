@@ -386,3 +386,6 @@ export type {
   PlanChangeType,
 } from './ai-plan-change';
 export { COACH_RESPONSE_JSON_SCHEMA, PLAN_CHANGE_TYPES } from './ai-plan-change';
+
+export type { CoachAction, CoachActionType } from '@/types/coach-action';
+export { COACH_ACTION_JSON_SCHEMA, COACH_ACTION_TYPES } from '@/types/coach-action';

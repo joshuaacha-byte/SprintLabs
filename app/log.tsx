@@ -6,7 +6,7 @@ import { Card, PrimaryButton } from '@/components/sprint-ui';
 import { changeReasonLabels, repFeelingOptions } from '@/constants/logging';
 import { Palette, useTheme } from '@/constants/sprintlab';
 import { ActiveWorkoutSession, AthleteProfile, PostWorkoutReview } from '@/types';
-import { getAthleteProfile } from '@/utils/athlete-profile';
+import { athleteFirstName, getAthleteProfile } from '@/utils/athlete-profile';
 import { buildManualTrainingLog, buildStructuredTrainingLog } from '@/utils/domain-adapters';
 import { evaluatePrehab } from '@/utils/prehab-engine';
 import { deriveSeasonPhase } from '@/utils/season-engine';
@@ -15,6 +15,9 @@ import { findPlannedExercise, getSessionCoverage, withDerivedStatuses } from '@/
 import { error, selection, success, tap } from '@/utils/haptics';
 import { getWorkoutCompletionCelebrationState } from '@/utils/streaks';
 import { WorkoutCompletionCelebration, type CelebrationPayload } from '@/components/workout-completion-celebration';
+import { buildSprintSeries } from '@/utils/progress';
+import { detectCelebrationMoment, detectFirstWorkoutMoment, detectHighRpeMoment, detectPRMoment, selectPrimaryCoachMoment } from '@/utils/coach-moments';
+import type { CoachMoment } from '@/types/coach-moment';
 
 const dateKey = () => new Date().toLocaleDateString('en-CA');
 const formatMinutes = (seconds: number) => `${Math.max(1, Math.round(seconds / 60))} min`;
@@ -48,6 +51,7 @@ export default function LogScreen() {
   // Stable across repeated save() calls (e.g. a double-tap on Finish) so storage-layer dedup can catch it.
   const logIdRef = useRef(Date.now().toString());
   const [celebration, setCelebration] = useState<CelebrationPayload | null>(null);
+  const [coachMoment, setCoachMoment] = useState<CoachMoment | null>(null);
   const [savedLogId, setSavedLogId] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
@@ -138,9 +142,31 @@ export default function LogScreen() {
         });
         await clearActiveWorkoutSession();
         const state = getWorkoutCompletionCelebrationState(schedule, scheduleHistory, priorSessions, finalized, new Date());
+
+        // Local-first Coach Moments: every candidate below is derived directly from data already
+        // computed for this save — none of it calls Gemini. Only the athlete tapping a moment's
+        // "Ask Split" handoff (see components/coach-moment-card.tsx) ever sends a real request.
+        const seriesBefore = buildSprintSeries(priorSessions);
+        const seriesAfter = buildSprintSeries([finalized, ...priorSessions]);
+        setCoachMoment(selectPrimaryCoachMoment([
+          detectPRMoment(seriesBefore, seriesAfter, finalized.id),
+          detectCelebrationMoment(state),
+          detectFirstWorkoutMoment(priorSessions.length),
+          detectHighRpeMoment(rpe),
+        ]));
+
         setSaved(true);
         setSavedLogId(finalized.structuredLog.id);
-        setCelebration({ kind: state.kind, planStreak: state.planStreak, consistencyStreak: state.consistencyStreak, week: state.week });
+        setCelebration({
+          kind: state.kind,
+          planStreak: state.planStreak,
+          longestPlanStreak: state.longestPlanStreak,
+          consistencyStreak: state.consistencyStreak,
+          trainingCount: state.trainingCount,
+          week: state.week,
+          coverage: state.coverage,
+          athleteFirstName: athleteFirstName(athlete),
+        });
       } else {
         const finishedAt = new Date().toISOString();
         const structuredLog = buildManualTrainingLog(review, finishedAt, undefined, logId);
@@ -148,7 +174,7 @@ export default function LogScreen() {
         await addLog({ id: logId, sessionId: logId, date: finishedAt, completed, rpe, energy, sleep: review.sleep, hamstring, soreness, bodyWeight: review.bodyWeight, notes, workoutTitle: 'Unplanned session' });
         setSaved(true);
         setSavedLogId(structuredLog.id);
-        setCelebration({ kind: 'one-off' });
+        setCelebration({ kind: 'one-off', athleteFirstName: athleteFirstName(athlete) });
       }
       success();
     } catch {
@@ -244,6 +270,7 @@ export default function LogScreen() {
     </KeyboardAvoidingView>
     {celebration ? <WorkoutCompletionCelebration
       payload={celebration}
+      moment={coachMoment}
       onViewSummary={() => router.replace(savedLogId ? { pathname: '/history-detail', params: { id: savedLogId } } : '/history')}
       onBackToToday={() => router.replace('/')}
     /> : null}

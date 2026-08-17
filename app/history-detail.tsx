@@ -7,7 +7,7 @@ import { Palette, useTheme } from '@/constants/sprintlab';
 import type { Exercise, ExerciseResult, TrainingLog, WorkoutCompletionStatus } from '@/types';
 import { deleteTrainingLog, getTrainingLog, saveFutureWorkoutOverride, updateTrainingLog } from '@/utils/storage';
 import { completeStep, error, selection, success, tap, warning } from '@/utils/haptics';
-import { completionStatusLabels, exerciseResultFor, keySprintResult, readableDate, sorenessIndicator, workoutCategoryLabels, workoutToPlannedSnapshot } from '@/utils/training-history';
+import { completionStatusDisplay, completionStatusLabels, exerciseResultFor, keySprintResult, readableDate, sorenessIndicator, workoutCategoryLabels, workoutToPlannedSnapshot } from '@/utils/training-history';
 
 const completionStatuses = Object.keys(completionStatusLabels) as WorkoutCompletionStatus[];
 const painLabels = { 'minor-tightness': 'Minor tightness', 'lingering-niggle': 'Lingering niggle', 'severe-acute': 'Severe / acute', 'not-recorded': 'Not recorded' } as const;
@@ -87,7 +87,7 @@ export default function HistoryDetailScreen() {
     <Eyebrow>Completed training log</Eyebrow>
     <ScreenTitle subtitle={`${readableDate(log.date)} · ${workoutCategoryLabels[log.plannedWorkout.trainingCategory]}`}>{log.plannedWorkout.name}</ScreenTitle>
 
-    <Card style={styles.summary}><View style={styles.summaryTop}><View style={{ flex: 1 }}><Text style={styles.summaryStatus}>{completionStatusLabels[log.completionStatus]}</Text><Text style={styles.summaryPurpose}>{log.plannedWorkout.purpose}</Text></View><View style={styles.rpe}><Text style={styles.rpeValue}>{log.sessionRpe ?? '—'}</Text><Text style={styles.rpeLabel}>RPE</Text></View></View><View style={styles.chips}><DetailChip>{keyResult ? `Best · ${keyResult}` : 'No timed sprint'}</DetailChip><DetailChip warning={soreness.level === 'high' || soreness.level === 'moderate'}>{`Soreness · ${soreness.label}`}</DetailChip><DetailChip>{`${log.plannedWorkout.estimatedDurationMinutes || '—'} min planned`}</DetailChip></View></Card>
+    <Card style={styles.summary}><View style={styles.summaryTop}><View style={{ flex: 1 }}><Text style={styles.summaryStatus}>{completionStatusDisplay(log)}</Text><Text style={styles.summaryPurpose}>{log.plannedWorkout.purpose}</Text></View><View style={styles.rpe}><Text style={styles.rpeValue}>{log.sessionRpe ?? '—'}</Text><Text style={styles.rpeLabel}>RPE</Text></View></View><View style={styles.chips}><DetailChip>{keyResult ? `Best · ${keyResult}` : 'No timed sprint'}</DetailChip><DetailChip warning={soreness.level === 'high' || soreness.level === 'moderate'}>{`Soreness · ${soreness.label}`}</DetailChip><DetailChip>{`${log.plannedWorkout.estimatedDurationMinutes || '—'} min planned`}</DetailChip></View></Card>
 
     <View style={styles.actionRow}><Pressable onPress={() => { tap(); setEditMode(current => !current); }} style={styles.outlineAction}><MaterialIcons name="edit" size={18} color={palette.accent} /><Text style={styles.outlineText}>{editMode ? 'Cancel editing' : 'Edit log'}</Text></Pressable><Pressable onPress={() => { tap(); remove(); }} style={styles.deleteAction}><MaterialIcons name="delete-outline" size={18} color={palette.red} /><Text style={styles.deleteText}>Delete</Text></Pressable></View>
 

@@ -402,6 +402,12 @@ export type AthleteProfile = {
   experienceAnswered?: boolean;
   sportProfileAnswered?: boolean;
   primarySportAnswered?: boolean;
+  /** Onboarding V3: separates the track event-selection screen from the main-event screen that
+   * only appears when multiple events were selected, and both from the dedicated PR-entry
+   * screen that follows. `sportProfileAnswered` remains the single "this whole sub-flow is
+   * done" gate, unchanged from before. */
+  trackEventsAnswered?: boolean;
+  trackMainEventAnswered?: boolean;
   turfAccess?: AccessLevel;
   /** Local workout reminders. Time is stored in the athlete's current local timezone. */
   workoutReminderEnabled?: boolean;

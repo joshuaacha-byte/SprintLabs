@@ -1,9 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type PropsWithChildren } from 'react';
-import type { CoachResponsePayload, PlanChangeProposal } from '@/types';
+import type { CoachAction, CoachResponsePayload, PlanChangeProposal } from '@/types';
 import { buildCurrentAthleteAIContext } from '@/utils/ai-context-live';
 import { applyAIPlanChange } from '@/utils/plan-change-apply';
 import { boundedHistory, COACH_ERROR_COPY, type ProposalDisplay } from '@/utils/coach';
 import { resolveProposalDisplay } from '@/utils/coach-resolve';
+import type { CoachActionDisplay } from '@/utils/coach-actions';
+import { resolveCoachActionDisplay } from '@/utils/coach-actions-resolve';
 import { dismissCoachTrigger, getActiveCoachTrigger } from '@/utils/coach-triggers-live';
 import type { CoachTrigger } from '@/utils/coach-triggers';
 import { toLocalDateKey } from '@/utils/progress';
@@ -34,8 +36,18 @@ export type CoachProposalMessage = {
   status: CoachProposalStatus;
   statusNote?: string;
 };
+/** A navigation/workflow card (Coach UI Phase C-4) — never a mutation. `display` is resolved
+ * against live storage before this message is ever created (see utils/coach-actions-resolve.ts),
+ * so by the time it exists here it is already known to be safely actionable. */
+export type CoachActionMessage = {
+  id: string;
+  kind: 'action';
+  text: string;
+  action: CoachAction;
+  display: CoachActionDisplay;
+};
 export type CoachErrorMessage = { id: string; kind: 'error'; text: string };
-export type CoachMessage = CoachTextMessage | CoachProposalMessage | CoachErrorMessage;
+export type CoachMessage = CoachTextMessage | CoachProposalMessage | CoachActionMessage | CoachErrorMessage;
 
 type CoachContextValue = {
   isOpen: boolean;
@@ -180,6 +192,24 @@ export function CoachProvider({ children }: PropsWithChildren) {
           status: 'pending',
         };
         setMessages(current => [...current, proposalMessage]);
+      } else if (payload.action) {
+        // Treat the action as a request, not truth: resolve/validate it against live storage
+        // before ever showing a card. An unresolvable reference (a stale/unknown workout id, a
+        // readiness check already completed, a workout that's no longer startable) falls back
+        // to plain text instead of a broken button — never a second Gemini call either way.
+        const resolved = await resolveCoachActionDisplay(payload.action);
+        if (resolved) {
+          const actionMessage: CoachActionMessage = {
+            id: `split-${Date.now()}`,
+            kind: 'action',
+            text: payload.message,
+            action: resolved.action,
+            display: resolved.display,
+          };
+          setMessages(current => [...current, actionMessage]);
+        } else {
+          setMessages(current => [...current, { id: `split-${Date.now()}`, kind: 'split', text: payload.message }]);
+        }
       } else {
         setMessages(current => [...current, { id: `split-${Date.now()}`, kind: 'split', text: payload.message }]);
       }

@@ -65,7 +65,7 @@ const readiness: ReadinessDecision = {
   painNotes: '',
 };
 
-const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions, logs, readiness, now });
+const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions, logs, readiness, libraryWorkouts: [], now });
 const message = 'Why is this athlete\'s current week structured this way, and is there anything in the recent training data that would make you reconsider it?';
 
 async function main() {

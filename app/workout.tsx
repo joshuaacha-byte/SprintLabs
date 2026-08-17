@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { PrimaryButton } from '@/components/sprint-ui';
+import { sectionIconName } from '@/utils/workout-icons';
 import { Palette, useTheme } from '@/constants/sprintlab';
 import { exerciseSuggestions } from '@/data/workouts';
 import {
@@ -64,16 +65,6 @@ const formatClock = (seconds: number) => {
   return hours
     ? `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
     : `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-};
-
-const sectionIcon = (title: string) => {
-  const normalized = title.toLowerCase();
-  if (normalized.includes('warm')) return 'directions-run';
-  if (normalized.includes('track')) return 'speed';
-  if (normalized.includes('plyo')) return 'bolt';
-  if (normalized.includes('strength')) return 'fitness-center';
-  if (normalized.includes('cool')) return 'self-improvement';
-  return 'exercise';
 };
 
 const prescription = (exercise: PlannedExercise) => {
@@ -334,6 +325,28 @@ export default function WorkoutScreen() {
           hapticWarning();
           await clearActiveWorkoutSession();
           router.replace('/');
+        },
+      },
+    ],
+  );
+
+  // A secondary, always-available way out of an in-progress workout — deliberately not gated on
+  // finishing every exercise. Real training gets cut short for real reasons; SprintLab should
+  // record whatever actually happened rather than push the athlete to fake completion just to
+  // exit. Unlike cancelWorkout (which discards everything), this keeps every recorded result and
+  // routes through the same review screen the normal "Finish" path uses, so nothing is
+  // fabricated and nothing completed is lost.
+  const endWorkoutEarly = () => Alert.alert(
+    'End this workout now?',
+    'Whatever you’ve completed so far will be saved. Anything not marked will be recorded as not completed.',
+    [
+      { text: 'Keep going', style: 'cancel' },
+      {
+        text: 'End workout',
+        onPress: () => {
+          tap();
+          updateSession(current => ({ ...current, elapsedSeconds: elapsed }));
+          router.push('/log');
         },
       },
     ],
@@ -609,7 +622,7 @@ export default function WorkoutScreen() {
                 const exercise = findExercise(result);
                 if (!exercise) return null;
                 return <View key={result.exerciseId} style={styles.overviewRow}>
-                  <View style={styles.categoryIcon}><MaterialIcons name={sectionIcon(section.title) as any} size={18} color={palette.accent} /></View>
+                  <View style={styles.categoryIcon}><MaterialIcons name={sectionIconName(section.title)} size={18} color={palette.accent} /></View>
                   <View style={styles.rowCopy}>
                     <Text style={styles.overviewExercise}>{exercise.name}</Text>
                     <Text style={styles.overviewPrescription}>{prescription(exercise)}{restLabel(exercise) ? ` · ${restLabel(exercise)}` : ''}</Text>
@@ -763,7 +776,7 @@ export default function WorkoutScreen() {
                 </> : null}
 
                 {result.trackingKind === 'completion' ? <View style={styles.blockRow}>
-                  <View style={styles.blockIcon}><MaterialIcons name={sectionIcon(result.sectionTitle) as any} size={20} color={palette.accent} /></View>
+                  <View style={styles.blockIcon}><MaterialIcons name={sectionIconName(result.sectionTitle)} size={20} color={palette.accent} /></View>
                   <View style={styles.rowCopy}>
                     <Text style={styles.blockTitle}>{exercise.detail || 'Complete this block'}</Text>
                     {exercise.cue ? <Text style={styles.blockCue}>{exercise.cue}</Text> : null}
@@ -794,6 +807,9 @@ export default function WorkoutScreen() {
           <Pressable accessibilityLabel="Dismiss rest timer" onPress={() => { tap(); setRest(null); }} hitSlop={8}><MaterialIcons name="close" size={18} color={palette.muted} /></Pressable>
         </View> : null}
         <PrimaryButton title={bottomTitle} onPress={bottomAction} disabled={bottomDisabled} />
+        {totalProgress.resolved !== totalProgress.total ? <Pressable accessibilityRole="button" onPress={endWorkoutEarly} style={styles.endEarlyLink}>
+          <Text style={styles.endEarlyLinkText}>End workout early</Text>
+        </Pressable> : null}
       </View>
     </View>
 
@@ -932,6 +948,8 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   noteText: { color: palette.muted, fontSize: 11, lineHeight: 16, flex: 1 },
   changeText: { color: palette.orange, fontSize: 10, fontWeight: '700', paddingTop: 6 },
   activeFooter: { padding: 12, paddingTop: 9, gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.border, backgroundColor: palette.bg },
+  endEarlyLink: { minHeight: 34, alignItems: 'center', justifyContent: 'center' },
+  endEarlyLinkText: { color: palette.muted, fontSize: 12, fontWeight: '700' },
   restStrip: { minHeight: 48, borderRadius: 13, backgroundColor: palette.surface, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, gap: 8 },
   restMain: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
   restText: { color: palette.text, fontSize: 12, fontWeight: '900', fontVariant: ['tabular-nums'] },

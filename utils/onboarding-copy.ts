@@ -36,6 +36,24 @@ export function profileSummary(profile: AthleteProfile) {
   return `${name === 'You' ? 'You’re' : `${name} is`} a ${role} ${sportNames[sport]} focused on ${goals || 'speed development'}.`;
 }
 
+/**
+ * SprintLab speed-profile reveal (app/profile.tsx's RevealStep): a short, human classification
+ * label plus an optional event/pathway line. There is no dedicated classification engine in the
+ * app — `sportPathway()` (utils/athlete-profile.ts) is the one deterministic mapping already
+ * used for planning, so this only adds a presentation label over its existing output rather than
+ * inventing new classification logic.
+ */
+export function speedClassificationLabel(profile: AthleteProfile): { title: string; eventLine?: string } {
+  const pathway = sportPathway(profile);
+  const trackEvents = [profile.primaryEvent, ...profile.secondaryEvents].join(' · ').toUpperCase();
+  if (pathway === 'track-long-sprint') return { title: 'Long Sprinter', eventLine: trackEvents };
+  if (pathway === 'track-short-sprint') return { title: 'Short Sprinter', eventLine: trackEvents };
+  if (pathway === 'combine-preparation') return { title: 'Combine Athlete', eventLine: '40-YARD DASH' };
+  if (pathway === 'logging-only') return { title: 'Training Log' };
+  const sport = profile.primarySport ?? profile.sport ?? 'general-athletic-performance';
+  return { title: 'Speed Athlete', eventLine: sport === 'general-athletic-performance' ? undefined : sportNames[sport].toUpperCase() };
+}
+
 export function classificationExplanation(profile: AthleteProfile) {
   const pathwayNames = {
     'track-short-sprint': 'short-sprint',

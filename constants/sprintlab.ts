@@ -43,3 +43,19 @@ export function createPalette(scheme: 'light' | 'dark' | null | undefined): Pale
 export function useTheme(): Palette {
   return useMemo(() => createPalette('dark'), []);
 }
+
+/** Shared geometry for the floating bottom tab bar (app/(tabs)/_layout.tsx) so anything else
+ * anchored to the bottom of a tab screen — currently just components/coach-launcher.tsx — can
+ * compute the same clearance above it instead of duplicating/drifting magic numbers. */
+export const FLOATING_TAB_BAR = {
+  /** The bar's own height, excluding the safe-area gap beneath it. Tall enough for an icon plus
+   * a full label with symmetric top/bottom breathing room — see app/(tabs)/_layout.tsx's
+   * tabBarStyle padding and tabBarLabelStyle's explicit lineHeight, which is what actually keeps
+   * the label from clipping against this box (a bare fontSize with no lineHeight can render
+   * taller than expected on some platforms/accessibility text-size settings). */
+  height: 76,
+  /** Visible gap between the safe-area bottom and the bar, so it reads as detached/floating. */
+  bottomGap: 14,
+  horizontalInset: 16,
+  borderRadius: 24,
+};

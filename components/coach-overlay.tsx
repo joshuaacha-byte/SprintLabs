@@ -3,8 +3,12 @@ import { ActivityIndicator, Image, Keyboard, KeyboardAvoidingView, Modal, Platfo
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { splitImages } from '@/components/onboarding';
+import { CoachMarkdown } from '@/components/coach-markdown';
+import { CoachActionCard } from '@/components/coach-action-card';
+import { CoachThinkingIndicator } from '@/components/coach-thinking';
 import { useCoach, type CoachOpenContext, type CoachProposalMessage } from '@/components/coach-context';
 import { Palette, useTheme } from '@/constants/sprintlab';
+import { athleteFirstName, getAthleteProfile } from '@/utils/athlete-profile';
 import { SUGGESTION_PROMPTS } from '@/utils/coach';
 import { tap } from '@/utils/haptics';
 
@@ -15,8 +19,11 @@ import { tap } from '@/utils/haptics';
 
 const SUGGESTIONS = Object.keys(SUGGESTION_PROMPTS);
 
-function greetingForContext(context: CoachOpenContext | null): string {
-  if (!context) return 'What’s on your mind?';
+// Only the generic "no specific context" greeting uses the athlete's name — every
+// surface-specific greeting below already reads as personal/situational on its own, so adding a
+// name to each of them would just repeat "Joshua" on every open rather than adding anything.
+function greetingForContext(context: CoachOpenContext | null, firstName: string | null): string {
+  if (!context) return firstName ? `Hey ${firstName}, what’s on your mind?` : 'What’s on your mind?';
   if (context.entityLabel) return `Want to talk through ${context.entityLabel}?`;
   switch (context.surface) {
     case 'today': return 'Here to help with today’s session.';
@@ -26,7 +33,7 @@ function greetingForContext(context: CoachOpenContext | null): string {
     case 'library': return 'Need help finding the right session?';
     case 'library-detail': return 'Questions about this workout?';
     case 'history-detail': return 'Want to talk through this session?';
-    default: return 'What’s on your mind?';
+    default: return firstName ? `Hey ${firstName}, what’s on your mind?` : 'What’s on your mind?';
   }
 }
 
@@ -37,6 +44,14 @@ export function CoachOverlay() {
   const { isOpen, closeCoach, openContext, activeTrigger, messages, isSending, sendMessage, applyProposal, dismissProposal } = useCoach();
   const [draft, setDraft] = useState('');
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [firstName, setFirstName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let active = true;
+    void getAthleteProfile().then(profile => { if (active) setFirstName(athleteFirstName(profile)); });
+    return () => { active = false; };
+  }, [isOpen]);
 
   // Full safe-area breathing room above the home indicator when the keyboard is closed; once the
   // keyboard is showing, the KeyboardAvoidingView has already pushed the composer to sit just
@@ -88,7 +103,7 @@ export function CoachOverlay() {
             </View>
           </View> : null}
 
-          <Text style={styles.greeting}>{greetingForContext(openContext)}</Text>
+          <Text style={styles.greeting}>{greetingForContext(openContext, firstName)}</Text>
 
           <View style={styles.chipRow}>
             {SUGGESTIONS.map(suggestion => (
@@ -103,6 +118,9 @@ export function CoachOverlay() {
               if (message.kind === 'proposal') {
                 return <ProposalCard key={message.id} message={message} styles={styles} palette={palette} onApply={() => applyProposal(message.id)} onDismiss={() => dismissProposal(message.id)} />;
               }
+              if (message.kind === 'action') {
+                return <CoachActionCard key={message.id} message={message} />;
+              }
               if (message.kind === 'error') {
                 return <View key={message.id} style={styles.errorBubble}>
                   <MaterialIcons name="error-outline" size={15} color={palette.red} />
@@ -110,15 +128,14 @@ export function CoachOverlay() {
                 </View>;
               }
               return <View key={message.id} style={[styles.messageBubble, message.kind === 'athlete' ? styles.messageAthlete : styles.messageSplit]}>
-                <Text style={message.kind === 'athlete' ? styles.messageAthleteText : styles.messageSplitText}>{message.text}</Text>
+                {message.kind === 'athlete'
+                  ? <Text style={styles.messageAthleteText}>{message.text}</Text>
+                  : <CoachMarkdown>{message.text}</CoachMarkdown>}
               </View>;
             })}
           </View> : null}
 
-          {isSending ? <View style={styles.thinkingRow}>
-            <ActivityIndicator size="small" color={palette.accent} />
-            <Text style={styles.thinkingText}>Split is thinking…</Text>
-          </View> : null}
+          {isSending ? <CoachThinkingIndicator /> : null}
         </ScrollView>
 
         <View style={[styles.inputRow, { paddingBottom: keyboardVisible ? 10 : insets.bottom + 12 }]}>
@@ -207,8 +224,6 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   messageSplitText: { color: palette.text, fontSize: 13, lineHeight: 18 },
   errorBubble: { flexDirection: 'row', alignItems: 'center', gap: 7, alignSelf: 'flex-start', maxWidth: '90%', borderRadius: 14, paddingHorizontal: 13, paddingVertical: 9, backgroundColor: 'rgba(255,98,98,0.1)', borderWidth: 1, borderColor: 'rgba(255,98,98,0.3)' },
   errorBubbleText: { flex: 1, color: palette.red, fontSize: 12, lineHeight: 17, fontWeight: '600' },
-  thinkingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
-  thinkingText: { color: palette.muted, fontSize: 12, fontWeight: '700' },
   proposalCard: { alignSelf: 'stretch', gap: 10, borderRadius: 16, borderWidth: 1, borderColor: palette.accent, backgroundColor: palette.surface2, padding: 13 },
   proposalBody: { gap: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.border, paddingTop: 9 },
   proposalAction: { color: palette.accent, fontSize: 10, fontWeight: '900', letterSpacing: 1 },

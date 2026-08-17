@@ -46,6 +46,16 @@ export default function PlanScreen() {
     tap();
     router.push({ pathname: '/workout-builder', params: { day: String(dayIndex) } });
   };
+  const findSubstitute = (dayIndex: WeekdayIndex) => {
+    tap();
+    // "Find substitute" targets the next real calendar occurrence of this recurring weekday
+    // (today itself if it's today) — a plan-change proposal always targets a specific date.
+    const today = new Date();
+    const offset = (dayIndex - today.getDay() + 7) % 7;
+    const target = new Date(today);
+    target.setDate(today.getDate() + offset);
+    router.push({ pathname: '/library-substitute', params: { date: target.toLocaleDateString('en-CA') } });
+  };
   const markRest = async (dayIndex: WeekdayIndex) => {
     try {
       await markDayAsRest(dayIndex);
@@ -144,6 +154,7 @@ export default function PlanScreen() {
               <View style={styles.actions}>
                 <Pressable onPress={() => startPlanned(day)} style={styles.startAction}><MaterialIcons name="play-arrow" size={18} color="#0B1000" /><Text style={styles.startActionText}>{isToday ? 'Start today’s session' : 'Start today'}</Text></Pressable>
                 <Pressable onPress={() => editDay(day.dayIndex)} style={styles.primaryAction}><MaterialIcons name="edit" size={17} color={palette.accent} /><Text style={styles.primaryActionText}>Edit session</Text></Pressable>
+                <Pressable onPress={() => findSubstitute(day.dayIndex)} style={styles.primaryAction}><MaterialIcons name="swap-horiz" size={17} color={palette.accent} /><Text style={styles.primaryActionText}>Find substitute</Text></Pressable>
                 <Pressable onPress={() => { tap(); setChoosingMoveTarget(value => !value); }} style={styles.secondaryAction}><Text style={styles.secondaryActionText}>Move</Text></Pressable>
                 <Pressable onPress={() => markRest(day.dayIndex)} style={styles.secondaryAction}><Text style={styles.restActionText}>Make rest day</Text></Pressable>
               </View>

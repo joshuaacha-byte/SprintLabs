@@ -58,7 +58,7 @@ const REPEATED_EFFORT_MIN_COUNT = 2;
 const RECENT_MISS_WINDOW_DAYS = 2;
 const MEET_APPROACHING_MAX_DAYS = 7;
 
-export type CoachTriggerWeekDayStatus = 'completed' | 'partial' | 'missed' | 'today' | 'upcoming' | 'rest';
+export type CoachTriggerWeekDayStatus = 'completed' | 'partial' | 'missed' | 'today' | 'upcoming' | 'rest' | 'extra';
 export type CoachTriggerWeekDay = { date: string; status: CoachTriggerWeekDayStatus };
 export type CoachTriggerRecentSession = { id: string; date: string; rpe: number };
 export type CoachTriggerReadiness = { level?: 'green' | 'yellow' | 'red' } | null;

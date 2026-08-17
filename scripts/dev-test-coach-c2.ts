@@ -31,7 +31,7 @@ const schedule: ScheduledDay[] = [0, 1, 2, 3, 4, 5, 6].map(dayIndex => ({
   restTitle: WORKOUT_DAYS.has(dayIndex) ? undefined : 'Rest day',
 }));
 
-const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions: [], logs: [], readiness: null, now });
+const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions: [], logs: [], readiness: null, libraryWorkouts: [], now });
 
 // Mimics a short prior exchange so this also exercises bounded multi-turn history, exactly like
 // a real reopened Coach conversation — matching components/coach-context.tsx's boundedHistory().

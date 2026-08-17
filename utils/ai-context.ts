@@ -1,6 +1,7 @@
-import type { AthleteProfile, CompletedWorkoutSession, ReadinessDecision, ScheduledDay, TrainingLogSummary } from '@/types';
+import type { AthleteProfile, CompletedWorkoutSession, LibraryWorkout, ReadinessDecision, ScheduledDay, TrainingLogSummary } from '@/types';
 import { buildRecentSessions, buildWeeklyProgress, toLocalDateKey, type ScheduleHistoryEntry } from '@/utils/progress';
 import { deriveSeasonPhase } from '@/utils/season-engine';
+import { buildCoachLibraryCandidates, type LibraryCandidateSummary } from '@/utils/library-retrieval';
 
 /**
  * Converts SprintLab's existing internal records into a compact, normalized object safe to
@@ -8,9 +9,11 @@ import { deriveSeasonPhase } from '@/utils/season-engine';
  * already trusted elsewhere in the app (buildWeeklyProgress, buildRecentSessions,
  * deriveSeasonPhase) rather than re-deriving athlete state a second way.
  *
- * Deliberately excluded (see SPRINTLAB_AI_CONTEXT.md): full workout-library definitions,
- * entire history, UI/navigation/visual state, and anything not useful for answering a
- * training question.
+ * Deliberately excluded: the full workout library, entire history, UI/navigation/visual state,
+ * and anything not useful for answering a training question. `libraryCandidates` is the one
+ * exception — a small, retrieval-selected set (utils/library-retrieval.ts) of real Library
+ * workouts relevant to today's session and this athlete, so a replace_workout/change_workout_variant
+ * proposal can reference a real id instead of guessing one.
  */
 
 const RECENT_TRAINING_LIMIT = 8;
@@ -53,6 +56,9 @@ export type AthleteAIContext = {
     latestReadiness?: { date: string; level?: string; reasons?: string[] };
     recentRpeAverage?: number;
   };
+  /** A small, retrieval-selected set of real Approved Library workouts relevant right now —
+   * never the full library. See utils/library-retrieval.ts::buildCoachLibraryCandidates. */
+  libraryCandidates: LibraryCandidateSummary[];
 };
 
 export type AthleteAIContextInput = {
@@ -62,6 +68,7 @@ export type AthleteAIContextInput = {
   sessions: CompletedWorkoutSession[];
   logs: TrainingLogSummary[];
   readiness: ReadinessDecision | null;
+  libraryWorkouts: LibraryWorkout[];
   now?: Date;
 };
 
@@ -73,6 +80,14 @@ export function buildAthleteAIContext(input: AthleteAIContextInput): AthleteAICo
   const weekly = buildWeeklyProgress(input.schedule, input.sessions, now, input.scheduleHistory);
   const recent = buildRecentSessions(input.logs, input.sessions, RECENT_TRAINING_LIMIT);
   const recentRpeValues = recent.map(session => session.rpe).filter(rpe => rpe > 0);
+
+  const todayScheduledDay = input.schedule.find(day => day.dayIndex === now.getDay());
+  const libraryCandidates = buildCoachLibraryCandidates({
+    workouts: input.libraryWorkouts,
+    profile,
+    schedule: input.schedule,
+    todayWorkoutId: todayScheduledDay?.kind === 'workout' ? todayScheduledDay.workout?.id : undefined,
+  });
 
   const restrictions = (profile.coachRestrictions || profile.medicalRestrictions || profile.cautionAreas?.length || profile.currentPain)
     ? {
@@ -128,5 +143,6 @@ export function buildAthleteAIContext(input: AthleteAIContextInput): AthleteAICo
         ? Math.round((recentRpeValues.reduce((sum, value) => sum + value, 0) / recentRpeValues.length) * 10) / 10
         : undefined,
     },
+    libraryCandidates,
   };
 }

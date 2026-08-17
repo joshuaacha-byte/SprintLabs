@@ -33,7 +33,7 @@ const schedule: ScheduledDay[] = [0, 1, 2, 3, 4, 5, 6].map(dayIndex => ({
   restTitle: WORKOUT_DAYS.has(dayIndex) ? undefined : 'Rest day',
 }));
 
-const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions: [], logs: [], readiness: null, now });
+const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions: [], logs: [], readiness: null, libraryWorkouts: [], now });
 const message = 'I missed Friday\'s workout and can only train Saturday or Sunday. What should I change?';
 
 /** Resolves any ISO date the proposal references back to the fixture's Mon/Wed/Fri recurring pattern, so we can locally validate the proposal exactly as SprintLab would on-device. */

@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import type { AthleteProfile, ScheduledDay, TrainingLog } from '@/types';
 import { getAthleteProfile } from '@/utils/athlete-profile';
 import { getFutureWorkoutOverrides, getTrainingLogs, getWeekSchedule } from '@/utils/storage';
+import { getNotificationPermissionStatus, requestNotificationPermission } from '@/utils/notification-permission';
 
 const REMINDER_IDS_KEY = 'sprintlab.workout-reminder-ids.v1';
 const CHANNEL_ID = 'workout-reminders';
@@ -17,10 +18,6 @@ type ScheduledReminder = {
 export type ReminderSyncResult =
   | { status: 'scheduled'; count: number; nextAt: string | null }
   | { status: 'disabled' | 'unsupported' | 'permission-denied'; count: 0 };
-
-function notificationPermissionGranted(permission: { granted?: boolean; status?: string; ios?: { status?: number } }) {
-  return permission.granted === true || permission.status === 'granted';
-}
 
 const dateKey = (date: Date) => {
   const year = date.getFullYear();
@@ -109,11 +106,15 @@ export async function syncWorkoutReminders(options?: {
   await cancelOwnedReminders();
   if (!profile?.workoutReminderEnabled) return { status: 'disabled', count: 0 };
 
-  let permission = await Notifications.getPermissionsAsync();
-  if (!notificationPermissionGranted(permission) && options?.requestPermission) {
-    permission = await Notifications.requestPermissionsAsync();
+  // Never requests here on its own — this function only ASKS for the native prompt when the
+  // caller explicitly says the athlete just opted in (requestPermission: true), which should only
+  // ever be true from the notification-setup screen's "Enable" action. A background/automatic
+  // sync (e.g. app launch, `initializeWorkoutNotifications`) always passes this as false/omitted.
+  let status = await getNotificationPermissionStatus();
+  if (status === 'undetermined' && options?.requestPermission) {
+    status = await requestNotificationPermission();
   }
-  if (!notificationPermissionGranted(permission)) return { status: 'permission-denied', count: 0 };
+  if (status !== 'granted') return { status: 'permission-denied', count: 0 };
 
   const [schedule, logs, overrides] = await Promise.all([
     options?.schedule ? Promise.resolve(options.schedule) : getWeekSchedule(),
@@ -171,9 +172,12 @@ export async function disableWorkoutReminders() {
 export async function scheduleWorkoutReminderTest(profile?: AthleteProfile | null) {
   const Notifications = await configureNotifications();
   if (!Notifications) return { status: 'unsupported' as const };
-  let permission = await Notifications.getPermissionsAsync();
-  if (!notificationPermissionGranted(permission)) permission = await Notifications.requestPermissionsAsync();
-  if (!notificationPermissionGranted(permission)) return { status: 'permission-denied' as const };
+  // The test-preview button lives in Settings, only reachable after the athlete has already
+  // opted in through the notification-setup flow at least once — but stay defensive and only
+  // prompt if genuinely undetermined, never re-prompt after a denial.
+  let status = await getNotificationPermissionStatus();
+  if (status === 'undetermined') status = await requestNotificationPermission();
+  if (status !== 'granted') return { status: 'permission-denied' as const };
 
   const schedule = await getWeekSchedule();
   const today = schedule.find(day => day.dayIndex === new Date().getDay());

@@ -10,10 +10,12 @@ import { Card, Eyebrow, PrimaryButton, ScreenTitle } from '@/components/sprint-u
 import { Palette, useTheme } from '@/constants/sprintlab';
 import { workoutLibrarySourceSummary } from '@/data/workout-sources';
 import type { AthleteProfile, MeetPriority } from '@/types';
-import { getAthleteProfile, getTrainingWorkflow, resetAllSprintLabLocalData, saveAthleteProfile, trainingWorkflowLabel } from '@/utils/athlete-profile';
+import { athleteFirstName, getAthleteProfile, getTrainingWorkflow, resetAllSprintLabLocalData, saveAthleteProfile, trainingWorkflowLabel } from '@/utils/athlete-profile';
 import { deriveSeasonPhase } from '@/utils/season-engine';
 import { reminderTimeLabel, scheduleWorkoutReminderTest, syncWorkoutReminders } from '@/utils/workout-reminders';
 import { getThemePreference, saveThemePreference, type ThemePreference } from '@/utils/theme-preference';
+import { requestSprintLabIntroLaunch } from '@/utils/sprintlab-intro';
+import { getNotificationPermissionStatus } from '@/utils/notification-permission';
 import { completeStep, error, selection, success, tap, warning } from '@/utils/haptics';
 
 const pretty = (value: string) => value.replaceAll('-', ' ').replace(/\b\w/g, letter => letter.toUpperCase());
@@ -50,6 +52,15 @@ export default function SettingsScreen() {
 
   const editProfile = () => { tap(); router.push({ pathname: '/profile', params: { mode: 'edit' } }); };
 
+  const replayIntroTour = async () => {
+    tap();
+    await requestSprintLabIntroLaunch();
+    router.replace('/');
+  };
+
+  // Saving a TIME preference never touches the native permission API by itself — that only ever
+  // happens from the dedicated Notifications setup screen's own "Enable" action. If permission
+  // isn't already granted, this hands off there instead of prompting inline.
   const setReminder = async (enabled: boolean, hour = 16, minute = 0, customTime = false, emitFeedback = true) => {
     if (!profile) return;
     try {
@@ -62,18 +73,19 @@ export default function SettingsScreen() {
         workoutReminderAnswered: true,
       });
       setProfile(saved);
-      const result = await syncWorkoutReminders({ profile: saved, requestPermission: enabled });
-      if (result.status === 'permission-denied') {
-        warning();
-        Alert.alert('Notifications are off', 'SprintLab could not schedule reminders because notification permission was not granted. You can allow it later in your device settings.');
-      } else {
-        if (emitFeedback) completeStep();
-        if (result.status === 'scheduled') {
-          const next = result.nextAt
-            ? ` The next is ${new Date(result.nextAt).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.`
-            : ' No future workout currently matches the saved weekly schedule.';
-          Alert.alert('Workout reminders updated', `${result.count} upcoming session preview${result.count === 1 ? '' : 's'} scheduled.${next}`);
-        }
+
+      if (!enabled) { await syncWorkoutReminders({ profile: saved }); return; }
+
+      const permission = await getNotificationPermissionStatus();
+      if (permission !== 'granted') { tap(); router.push('/notifications-setup'); return; }
+
+      const result = await syncWorkoutReminders({ profile: saved });
+      if (emitFeedback) completeStep();
+      if (result.status === 'scheduled') {
+        const next = result.nextAt
+          ? ` The next is ${new Date(result.nextAt).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.`
+          : ' No future workout currently matches the saved weekly schedule.';
+        Alert.alert('Workout reminders updated', `${result.count} upcoming session preview${result.count === 1 ? '' : 's'} scheduled.${next}`);
       }
     } catch {
       error();
@@ -188,7 +200,7 @@ export default function SettingsScreen() {
         </View>
 
         <ScreenTitle subtitle="Review the context SprintLab uses for planning, logging, and display preferences.">
-          {profile?.name.trim() || 'Athlete'}
+          {athleteFirstName(profile) || 'Athlete'}
         </ScreenTitle>
 
         <SplitMoment
@@ -299,6 +311,10 @@ export default function SettingsScreen() {
               </Pressable>
             ) : null}
           </View>
+          <Pressable accessibilityRole="button" onPress={() => { tap(); router.push('/notifications-setup'); }} style={styles.textAction}>
+            <Text style={styles.textActionLabel}>Notification permission</Text>
+            <MaterialIcons name="arrow-forward" size={17} color={palette.accent} />
+          </Pressable>
           <Pressable accessibilityRole="button" onPress={() => void testReminder()} style={styles.testReminder}>
             <MaterialIcons name="notifications-none" size={18} color={palette.accent} />
             <Text style={styles.testReminderText}>Send a test preview in 5 seconds</Text>
@@ -354,6 +370,11 @@ export default function SettingsScreen() {
             </View>
           </View>
         </Card>
+
+        <Pressable accessibilityRole="button" onPress={() => void replayIntroTour()} style={styles.replayIntro}>
+          <MaterialIcons name="play-circle-outline" size={15} color={palette.muted} />
+          <Text style={styles.replayIntroText}>Replay the SprintLab intro</Text>
+        </Pressable>
 
         {__DEV__ ? (
           <Card style={styles.devCard}>
@@ -445,6 +466,8 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   themeOptionTextSelected: { color: palette.accent },
   textAction: { minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: palette.border, paddingTop: 10 },
   textActionLabel: { color: palette.accent, fontSize: 12, fontWeight: '900' },
+  replayIntro: { minHeight: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, alignSelf: 'center' },
+  replayIntroText: { color: palette.muted, fontSize: 11, fontWeight: '700' },
   devCard: { gap: 10, borderColor: '#54262A' },
   dangerButton: { minHeight: 48, borderRadius: 13, backgroundColor: '#2A1418', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   dangerText: { color: palette.red, fontWeight: '900', fontSize: 13 },

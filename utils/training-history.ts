@@ -44,10 +44,22 @@ export const workoutCategoryLabels: Record<WorkoutCategory, string> = {
 export const completionStatusLabels: Record<WorkoutCompletionStatus, string> = {
   'completed-as-planned': 'Completed as planned',
   'completed-with-modifications': 'Completed with changes',
-  partial: 'Partial',
-  stopped: 'Stopped',
+  partial: 'Ended early',
+  stopped: 'Abandoned',
   skipped: 'Skipped',
 };
+
+/** completionStatusLabels plus, for a partial/abandoned session, exactly how much of the planned
+ * workout was actually done (e.g. "Ended early · 5 of 8 items completed") — so History never
+ * shows a bare status word without the real coverage that explains it. */
+export function completionStatusDisplay(log: TrainingLog): string {
+  const label = completionStatusLabels[log.completionStatus];
+  if (log.completionStatus !== 'partial' && log.completionStatus !== 'stopped') return label;
+  const total = log.exerciseResults.length;
+  if (!total) return label;
+  const done = log.exerciseResults.filter(result => result.completed).length;
+  return `${label} · ${done} of ${total} items completed`;
+}
 
 export function historyDate(log: TrainingLog) {
   return log.completedAt ?? log.date ?? log.createdAt;

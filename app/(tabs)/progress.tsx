@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Card, Eyebrow, ScreenTitle } from '@/components/sprint-ui';
+import { useIntroTarget } from '@/components/sprintlab-intro-context';
 import { formatTrackConditions } from '@/constants/logging';
 import { Palette, useTheme } from '@/constants/sprintlab';
 import type { CompletedWorkoutSession, ScheduledDay, TrainingLogSummary } from '@/types';
@@ -20,7 +21,14 @@ import {
 } from '@/utils/progress';
 import { getCompletedWorkoutSessions, getLogs, getScheduleHistory, getWeekSchedule } from '@/utils/storage';
 import { selection, tap } from '@/utils/haptics';
-import { calculateConsistencyStreak, calculatePlanStreak } from '@/utils/streaks';
+import {
+  calculateConsistencyStreak,
+  calculateCurrentWeekCompletion,
+  calculatePlanConsistency,
+  calculatePlanStreak,
+  countPlannedWorkoutsCompleted,
+} from '@/utils/streaks';
+import { buildMilestoneCollection, type Milestone } from '@/utils/milestones';
 
 type PeriodWeeks = 4 | 8 | 12;
 type DetailKey = 'performance' | 'training' | 'recovery';
@@ -32,6 +40,7 @@ const createStatusMeta = (palette: Palette) => ({
   rest: { label: 'Rest', symbol: '–', color: palette.muted, background: palette.surface2 },
   today: { label: 'Today', symbol: '•', color: palette.accent, background: palette.surface2 },
   upcoming: { label: 'Future', symbol: '○', color: palette.muted, background: palette.surface2 },
+  extra: { label: 'Extra', symbol: '+', color: palette.accent, background: palette.surface2 },
 } as const);
 
 const toDateKey = (date: Date) => {
@@ -60,6 +69,7 @@ export default function ProgressScreen() {
     recovery: false,
   });
   const now = useMemo(() => new Date(), []);
+  const progressIntroTarget = useIntroTarget('progress-hero');
 
   useFocusEffect(useCallback(() => {
     Promise.all([getLogs(), getCompletedWorkoutSessions(), getWeekSchedule(), getScheduleHistory()])
@@ -83,18 +93,37 @@ export default function ProgressScreen() {
     () => calculateConsistencyStreak(schedule, sessions, now, scheduleHistory),
     [now, schedule, scheduleHistory, sessions],
   );
+  const trainingCount = useMemo(
+    () => countPlannedWorkoutsCompleted(schedule, sessions, scheduleHistory),
+    [schedule, scheduleHistory, sessions],
+  );
+  const planConsistency30d = useMemo(
+    () => calculatePlanConsistency(schedule, sessions, now, 30, scheduleHistory),
+    [now, schedule, scheduleHistory, sessions],
+  );
+  const currentWeekCompletion = useMemo(
+    () => calculateCurrentWeekCompletion(schedule, sessions, now, scheduleHistory),
+    [now, schedule, scheduleHistory, sessions],
+  );
   const cutoff = useMemo(() => periodStartKey(periodWeeks, now), [now, periodWeeks]);
   const periodSessions = useMemo(
     () => sessions.filter(session => sessionDateKey(session) >= cutoff),
     [cutoff, sessions],
   );
   const sprintSeries = useMemo(() => buildSprintSeries(periodSessions), [periodSessions]);
+  // Milestones read from the athlete's whole history, not the period selector above — unlocking
+  // "100 SESSIONS" shouldn't flicker back to locked just because the athlete switched to a 4-week view.
+  const allTimeSprintSeries = useMemo(() => buildSprintSeries(sessions), [sessions]);
+  const milestones = useMemo(
+    () => buildMilestoneCollection({ trainingCount, consistencyStreak, currentWeek: currentWeekCompletion, sprintSeries: allTimeSprintSeries }),
+    [trainingCount, consistencyStreak, currentWeekCompletion, allTimeSprintSeries],
+  );
+  const unlockedMilestoneCount = useMemo(() => milestones.filter(milestone => milestone.unlocked).length, [milestones]);
   const recovery = useMemo(() => buildRecoveryTrend(logs), [logs]);
   const periodVolume = useMemo(
     () => buildTrainingVolumeSummary(periodSessions, now),
     [now, periodSessions],
   );
-  const allTimeVolume = useMemo(() => buildTrainingVolumeSummary(sessions, now), [now, sessions]);
   const strengthSessions = useMemo(() => periodSessions.filter(session =>
     session.actualResults.some(result =>
       result.trackingKind === 'strength'
@@ -135,27 +164,43 @@ export default function ProgressScreen() {
       <Eyebrow>Training change over time</Eyebrow>
       <ScreenTitle subtitle="See whether your training, performance, and recovery are changing.">Progress</ScreenTitle>
 
-      {isNewAthlete ? <Card style={styles.onboardingCard}>
-        <View style={styles.onboardingIcon}>
-          <MaterialIcons name="insights" size={28} color={palette.accent} />
-        </View>
-        <Text style={styles.onboardingTitle}>Your trends will build here</Text>
-        <Text style={styles.onboardingCopy}>Complete and log sessions to begin building your trends.</Text>
-      </Card> : <>
-        <SectionTitle eyebrow="Overview" title="Your current picture" />
-        <Card style={styles.overviewCard}>
-          <View style={styles.metricGrid}>
-            <SummaryMetric value={`${weekly.completed}/${weekly.due}`} label="Sessions this week" />
-            <SummaryMetric value={`${planStreak}`} label="Plan Streak · scheduled sessions completed in a row" />
-            <SummaryMetric value={`${consistencyStreak}`} label="Consistency Streak · weeks at 80%+ planned training" />
-            <SummaryMetric value={`${periodVolume.completedSprintMeters.toLocaleString()}m`} label={`${periodWeeks}-week speed volume`} />
+      {/* The intro tour's Progress moment spotlights this exact region — whichever real card
+          actually renders here (the new-athlete card or the live summary/milestones), never a
+          recreated copy of it. */}
+      <View ref={progressIntroTarget} collapsable={false}>
+        {isNewAthlete ? <Card style={styles.onboardingCard}>
+          <View style={styles.onboardingIcon}>
+            <MaterialIcons name="insights" size={28} color={palette.accent} />
           </View>
-          {performanceChange ? <View style={styles.changeRow}>
-            <MaterialIcons name="trending-up" size={19} color={palette.accent} />
-            <Text style={styles.changeText}>{performanceChange}</Text>
-          </View> : null}
-        </Card>
+          <Text style={styles.onboardingTitle}>Your trends will build here</Text>
+          <Text style={styles.onboardingCopy}>Complete and log sessions to begin building your trends.</Text>
+        </Card> : <>
+          <SectionTitle eyebrow="Right now" title="Your Progress" />
+          <Card style={styles.progressSummaryCard}>
+            <View style={styles.streakHeadline}>
+              <Text style={styles.streakHeadlineEmoji}>🔥</Text>
+              <Text style={styles.streakHeadlineValue}>{planStreak}</Text>
+              <Text style={styles.streakHeadlineLabel}>session streak</Text>
+            </View>
+            <View style={styles.progressStatsRow}>
+              <ProgressStat value={`${trainingCount}`} label="workouts completed" />
+              <ProgressStat value={planConsistency30d.required ? `${planConsistency30d.percentage}%` : '—'} label="plan consistency" />
+              <ProgressStat value={`${unlockedMilestoneCount}`} label={unlockedMilestoneCount === 1 ? 'milestone unlocked' : 'milestones unlocked'} />
+            </View>
+            {performanceChange ? <View style={styles.changeRow}>
+              <MaterialIcons name="trending-up" size={19} color={palette.accent} />
+              <Text style={styles.changeText}>{performanceChange}</Text>
+            </View> : null}
+          </Card>
 
+          <SectionTitle eyebrow="Milestones" title="Achievements" />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.milestoneRow}>
+            {milestones.map(milestone => <MilestoneCard key={milestone.id} milestone={milestone} />)}
+          </ScrollView>
+        </>}
+      </View>
+
+      {!isNewAthlete ? <>
         <SectionTitle eyebrow="Performance" title="Timed sprint trends" />
         {sprintSeries.length ? <>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.seriesTabs}>
@@ -228,15 +273,7 @@ export default function ProgressScreen() {
           title="No recovery trend yet"
           copy="Readiness check-ins will build your sleep, effort, and soreness trends."
         />}
-
-        <SectionTitle eyebrow="Milestones" title="Useful markers" />
-        <Milestones
-          sessions={sessions}
-          logs={logs}
-          timedReps={allTimeVolume.timedReps}
-          sprintMeters={allTimeVolume.completedSprintMeters}
-        />
-      </>}
+      </> : null}
     </ScrollView>
   </SafeAreaView>;
 }
@@ -410,62 +447,40 @@ function TrendRow({ label, suffix, max, values, dataKey, latest, average, color 
   </View>;
 }
 
-type MilestoneItem = {
-  key: string;
-  icon: keyof typeof MaterialIcons.glyphMap;
-  title: string;
-  current: number;
-  target: number;
-};
-
-function Milestones({ sessions, logs, timedReps, sprintMeters }: {
-  sessions: CompletedWorkoutSession[];
-  logs: TrainingLogSummary[];
-  timedReps: number;
-  sprintMeters: number;
-}) {
+function ProgressStat({ value, label }: { value: string; label: string }) {
   const palette = useTheme();
   const styles = useMemo(() => createStyles(palette), [palette]);
-  const strengthSessions = sessions.filter(session => session.actualResults.some(result =>
-    result.trackingKind === 'strength'
-    && (result.status === 'completed' || result.strengthSets?.some(set => set.status === 'completed')),
-  )).length;
-  const items: MilestoneItem[] = [
-    { key: 'first', icon: 'check-circle', title: 'First completed session', current: sessions.length, target: 1 },
-    { key: 'honest-logs', icon: 'history', title: 'Three sessions logged', current: Math.max(sessions.length, logs.length), target: 3 },
-    { key: 'timed', icon: 'timer', title: 'Timed sprint baseline', current: timedReps, target: 3 },
-    { key: 'volume', icon: 'straighten', title: '1,000 recorded sprint meters', current: sprintMeters, target: 1000 },
-    { key: 'strength', icon: 'fitness-center', title: 'Five strength sessions', current: strengthSessions, target: 5 },
-  ];
-  const earned = items.filter(item => item.current >= item.target).slice(-2);
-  const next = items
-    .filter(item => item.current < item.target)
-    .sort((first, second) => (second.current / second.target) - (first.current / first.target))
-    .slice(0, 2);
+  return <View style={styles.progressStat}>
+    <Text style={styles.progressStatValue} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
+    <Text style={styles.progressStatLabel}>{label}</Text>
+  </View>;
+}
 
-  return <Card style={styles.milestonesCard}>
-    {earned.length ? <View style={styles.milestoneGroup}>
-      <Text style={styles.groupLabel}>Recently earned</Text>
-      {earned.map(item => <View key={item.key} style={styles.earnedRow}>
-        <View style={styles.earnedIcon}><MaterialIcons name={item.icon} size={18} color={palette.accent} /></View>
-        <Text style={styles.earnedTitle}>{item.title}</Text>
-        <MaterialIcons name="check" size={18} color={palette.accent} />
-      </View>)}
-    </View> : null}
-    {next.length ? <View style={styles.milestoneGroup}>
-      <Text style={styles.groupLabel}>Up next</Text>
-      {next.map(item => {
-        const progress = Math.min(100, Math.round((item.current / item.target) * 100));
-        return <View key={item.key} style={styles.nextMilestone}>
-          <View style={styles.nextHead}>
-            <Text style={styles.nextTitle}>{item.title}</Text>
-            <Text style={styles.nextCount}>{Math.min(item.current, item.target).toLocaleString()} of {item.target.toLocaleString()}</Text>
-          </View>
-          <View style={styles.milestoneTrack}><View style={[styles.milestoneFill, { width: `${progress}%` }]} /></View>
-        </View>;
-      })}
-    </View> : <Text style={styles.allEarned}>All current milestones earned. Keep logging honestly.</Text>}
-  </Card>;
+/** A locked card always shows the same plain lock glyph — the milestone's own icon (bolt,
+ * trending-up, etc.) is reserved for the unlocked state, so unlocking one visibly reveals
+ * something distinct rather than just recoloring the same icon. */
+function MilestoneCard({ milestone }: { milestone: Milestone }) {
+  const palette = useTheme();
+  const styles = useMemo(() => createStyles(palette), [palette]);
+  const locked = !milestone.unlocked;
+  const progressPercent = milestone.progress ? Math.min(100, Math.round((milestone.progress.current / milestone.progress.target) * 100)) : 0;
+  return <View style={[styles.milestoneCard, locked && styles.milestoneCardLocked]}>
+    <View style={[styles.milestoneIcon, !locked && styles.milestoneIconUnlocked]}>
+      <MaterialIcons name={locked ? 'lock-outline' : (milestone.icon as keyof typeof MaterialIcons.glyphMap)} size={20} color={locked ? palette.muted : palette.accent} />
+    </View>
+    <Text style={[styles.milestoneTitle, locked && styles.milestoneTitleLocked]}>{milestone.title}</Text>
+    <Text style={styles.milestoneDescription} numberOfLines={2}>{milestone.description}</Text>
+    <View style={styles.milestoneFooter}>
+      {milestone.progress ? (
+        milestone.unlocked
+          ? <Text style={styles.milestoneUnlockedText}>Unlocked</Text>
+          : <>
+            <View style={styles.milestoneTrack}><View style={[styles.milestoneFill, { width: `${progressPercent}%` }]} /></View>
+            <Text style={styles.milestoneProgressText}>{milestone.progress.current.toLocaleString()} / {milestone.progress.target.toLocaleString()}</Text>
+          </>
+      ) : <Text style={locked ? styles.milestoneLockedText : styles.milestoneUnlockedText}>{locked ? 'Locked' : 'Unlocked'}</Text>}
+    </View>
+  </View>;
 }
 
 function EmptyCard({ icon, title, copy }: { icon: keyof typeof MaterialIcons.glyphMap; title: string; copy: string }) {
@@ -490,7 +505,12 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   sectionHead: { gap: 3, marginTop: 8 },
   sectionEyebrow: { color: palette.accent, fontSize: 10, lineHeight: 14, fontWeight: '900', letterSpacing: 1.7, textTransform: 'uppercase' },
   sectionTitle: { color: palette.text, fontSize: 21, lineHeight: 27, fontWeight: '900' },
-  overviewCard: { gap: 14 },
+  progressSummaryCard: { gap: 16 },
+  streakHeadline: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+  streakHeadlineEmoji: { fontSize: 22 },
+  streakHeadlineValue: { color: palette.text, fontSize: 32, lineHeight: 36, fontWeight: '900' },
+  streakHeadlineLabel: { color: palette.muted, fontSize: 13, fontWeight: '700' },
+  progressStatsRow: { flexDirection: 'row', gap: 8, borderTopWidth: 1, borderTopColor: palette.border, paddingTop: 14 },
   metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   summaryMetric: { flexGrow: 1, flexBasis: 130, minHeight: 72, borderRadius: 14, backgroundColor: palette.surface2, padding: 11, justifyContent: 'center' },
   summaryValue: { color: palette.text, fontSize: 21, lineHeight: 26, fontWeight: '900' },
@@ -549,19 +569,23 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   trendBar: { width: '100%', borderTopLeftRadius: 3, borderTopRightRadius: 3 },
   trendAxis: { flexDirection: 'row', justifyContent: 'space-between' },
   axisText: { color: palette.muted, fontSize: 8 },
-  milestonesCard: { gap: 16 },
-  milestoneGroup: { gap: 9 },
-  groupLabel: { color: palette.muted, fontSize: 9, fontWeight: '900', letterSpacing: 1.2, textTransform: 'uppercase' },
-  earnedRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  earnedIcon: { width: 34, height: 34, borderRadius: 11, backgroundColor: palette.accentDark, alignItems: 'center', justifyContent: 'center' },
-  earnedTitle: { flex: 1, color: palette.text, fontSize: 12, fontWeight: '800' },
-  nextMilestone: { gap: 7, paddingVertical: 3 },
-  nextHead: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
-  nextTitle: { flex: 1, color: palette.text, fontSize: 12, fontWeight: '800' },
-  nextCount: { color: palette.muted, fontSize: 10, fontWeight: '800' },
-  milestoneTrack: { height: 6, borderRadius: 3, backgroundColor: palette.surface2, overflow: 'hidden' },
-  milestoneFill: { height: 6, borderRadius: 3, backgroundColor: palette.accent },
-  allEarned: { color: palette.text, fontSize: 12, lineHeight: 18, fontWeight: '700' },
+  progressStat: { flex: 1, gap: 3 },
+  progressStatValue: { color: palette.text, fontSize: 17, lineHeight: 21, fontWeight: '900' },
+  progressStatLabel: { color: palette.muted, fontSize: 9, lineHeight: 13, fontWeight: '700' },
+  milestoneRow: { gap: 10, paddingRight: 20 },
+  milestoneCard: { width: 168, minHeight: 168, borderRadius: 16, borderWidth: 1, borderColor: palette.accentDark, backgroundColor: palette.surface, padding: 13, gap: 6, justifyContent: 'space-between' },
+  milestoneCardLocked: { borderColor: palette.border },
+  milestoneIcon: { width: 34, height: 34, borderRadius: 11, backgroundColor: palette.surface2, alignItems: 'center', justifyContent: 'center' },
+  milestoneIconUnlocked: { backgroundColor: palette.accentDark },
+  milestoneTitle: { color: palette.text, fontSize: 13, fontWeight: '900', letterSpacing: 0.3, marginTop: 2 },
+  milestoneTitleLocked: { color: palette.muted },
+  milestoneDescription: { color: palette.muted, fontSize: 11, lineHeight: 15, flexGrow: 1 },
+  milestoneFooter: { gap: 5 },
+  milestoneTrack: { height: 5, borderRadius: 3, backgroundColor: palette.surface2, overflow: 'hidden' },
+  milestoneFill: { height: 5, borderRadius: 3, backgroundColor: palette.accent },
+  milestoneProgressText: { color: palette.muted, fontSize: 10, fontWeight: '800' },
+  milestoneUnlockedText: { color: palette.accent, fontSize: 10, fontWeight: '900', letterSpacing: 0.4, textTransform: 'uppercase' },
+  milestoneLockedText: { color: palette.muted, fontSize: 10, fontWeight: '800', letterSpacing: 0.4, textTransform: 'uppercase' },
   emptyCard: { minHeight: 94, flexDirection: 'row', alignItems: 'center', gap: 12 },
   emptyText: { flex: 1, gap: 3 },
   emptyTitle: { color: palette.text, fontSize: 14, fontWeight: '900' },

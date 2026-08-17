@@ -69,17 +69,17 @@ function check(label: string, fn: () => void) {
 }
 
 check('builds without throwing on a realistic fixture', () => {
-  const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions, logs, readiness, now });
+  const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions, logs, readiness, libraryWorkouts: [], now });
   assert(context.athlete.sport === 'track-and-field', 'expected sport to be carried through');
 });
 
 check('current week always has exactly 7 days', () => {
-  const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions, logs, readiness, now });
+  const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions, logs, readiness, libraryWorkouts: [], now });
   assert(context.currentWeek.days.length === 7, `expected 7 days, got ${context.currentWeek.days.length}`);
 });
 
 check('PRs are carried through from the profile, event-tagged', () => {
-  const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions, logs, readiness, now });
+  const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions, logs, readiness, libraryWorkouts: [], now });
   assert(context.athlete.prs.length === profile.personalBests.length, 'PR count mismatch');
   assert(context.athlete.prs.every(pr => Boolean(pr.event)), 'every PR must carry its event');
 });
@@ -89,36 +89,36 @@ check('recentTraining is bounded even with more sessions than the limit', () => 
   const manyLogs: TrainingLogSummary[] = manySessions.map((s, index) => ({
     id: `log-many-${index}`, sessionId: s.id, date: s.finishedAt, completed: true, rpe: 6, energy: 4, sleep: 7, hamstring: 0, soreness: 1, notes: 'note', workoutTitle: 'Session',
   }));
-  const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions: manySessions, logs: manyLogs, readiness, now });
+  const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions: manySessions, logs: manyLogs, readiness, libraryWorkouts: [], now });
   assert(context.recentTraining.length <= 8, `expected recentTraining bounded to 8, got ${context.recentTraining.length}`);
 });
 
 check('long notes are truncated, not sent in full', () => {
-  const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions, logs, readiness, now });
+  const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions, logs, readiness, libraryWorkouts: [], now });
   const longNoteEntry = context.recentTraining.find(entry => entry.notes && entry.notes.length > 100);
   assert(Boolean(longNoteEntry), 'expected the 400-char note to survive as a truncated entry');
   assert((longNoteEntry?.notes?.length ?? 0) <= 221, `expected truncation to ~220 chars, got ${longNoteEntry?.notes?.length}`);
 });
 
 check('missing readiness does not crash and is omitted, not fabricated', () => {
-  const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions, logs, readiness: null, now });
+  const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions, logs, readiness: null, libraryWorkouts: [], now });
   assert(context.recovery.latestReadiness === undefined, 'expected no latestReadiness when none was provided');
 });
 
 check('a profile with no restrictions produces no restrictions object', () => {
-  const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions, logs, readiness, now });
+  const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions, logs, readiness, libraryWorkouts: [], now });
   assert(context.athlete.restrictions === undefined, 'expected undefined restrictions for a clean profile');
 });
 
 check('coach/medical restrictions are carried through verbatim when present', () => {
   const restrictedProfile: AthleteProfile = { ...profile, coachRestrictions: 'No overspeed work this week.', medicalRestrictions: 'Cleared for full training as of 8/1.' };
-  const context = buildAthleteAIContext({ profile: restrictedProfile, schedule, scheduleHistory: [], sessions, logs, readiness, now });
+  const context = buildAthleteAIContext({ profile: restrictedProfile, schedule, scheduleHistory: [], sessions, logs, readiness, libraryWorkouts: [], now });
   assert(context.athlete.restrictions?.coach === 'No overspeed work this week.', 'coach restriction not carried through verbatim');
   assert(context.athlete.restrictions?.medical === 'Cleared for full training as of 8/1.', 'medical restriction not carried through verbatim');
 });
 
 check('the whole context stays compact for a normal fixture (token/cost discipline)', () => {
-  const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions, logs, readiness, now });
+  const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions, logs, readiness, libraryWorkouts: [], now });
   const size = JSON.stringify(context).length;
   assert(size < 5_000, `expected a compact context under 5000 chars for this small fixture, got ${size}`);
 });
