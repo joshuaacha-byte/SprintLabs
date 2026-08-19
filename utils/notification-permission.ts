@@ -24,6 +24,14 @@ export async function setNotificationOptInDecision(decision: NotificationOptInDe
   await AsyncStorage.setItem(OPT_IN_DECISION_KEY, decision);
 }
 
+/** Developer Tools' "Reset notification setup" — clears only SprintLab's own opt-in-decision
+ * flag so the explanation screen can be retested from its "never asked" state. This is entirely
+ * SprintLab-internal: it does NOT touch the real OS notification permission, which iOS/Android
+ * control and can only actually be reset from the device's own system settings. */
+export async function resetNotificationOptInDecision(): Promise<void> {
+  await AsyncStorage.removeItem(OPT_IN_DECISION_KEY);
+}
+
 export type NotificationPermissionStatus = 'granted' | 'denied' | 'undetermined' | 'unsupported';
 
 async function notificationsModule() {

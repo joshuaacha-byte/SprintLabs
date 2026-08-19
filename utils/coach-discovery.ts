@@ -12,3 +12,10 @@ export async function hasSeenCoachIntro(): Promise<boolean> {
 export async function markCoachIntroSeen(): Promise<void> {
   await AsyncStorage.setItem(COACH_INTRO_SEEN_KEY, 'true');
 }
+
+/** Developer Tools' "Reset Coach test state" — part of it. Clears only the launcher's one-time
+ * "Ask Coach" bubble flag. The conversation itself is never persisted (components/coach-context.tsx
+ * starts empty on every launch), so there is nothing else to clear for the conversation itself. */
+export async function resetCoachIntroSeen(): Promise<void> {
+  await AsyncStorage.removeItem(COACH_INTRO_SEEN_KEY);
+}

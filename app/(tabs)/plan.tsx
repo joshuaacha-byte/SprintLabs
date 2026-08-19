@@ -5,10 +5,11 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { Card, Eyebrow, ScreenTitle } from '@/components/sprint-ui';
 import { AppFooter } from '@/components/app-footer';
 import { Palette, useTheme } from '@/constants/sprintlab';
-import { defaultWeekSchedule } from '@/data/workouts';
-import { AthleteProfile, ScheduledDay, WeekdayIndex } from '@/types';
+import { defaultWeekSchedule, OPEN_DAY_RESTTITLE } from '@/data/workouts';
+import { AthleteProfile, CompletedWorkoutSession, ScheduledDay, WeekdayIndex } from '@/types';
 import { getAthleteProfile, getTrainingWorkflow } from '@/utils/athlete-profile';
-import { getWeekSchedule, markDayAsRest, swapScheduledDays } from '@/utils/storage';
+import { getCompletedWorkoutSessions, getWeekSchedule, markDayAsRest, swapScheduledDays } from '@/utils/storage';
+import { sessionDateKey, toLocalDateKey } from '@/utils/progress';
 import { prepareWorkoutLaunch } from '@/utils/workout-launch';
 import { completeStep, error, tap, warning } from '@/utils/haptics';
 
@@ -21,26 +22,34 @@ export default function PlanScreen() {
   const [athlete, setAthlete] = useState<AthleteProfile | null>(null);
   const [selected, setSelected] = useState<WeekdayIndex>(todayIndex);
   const [choosingMoveTarget, setChoosingMoveTarget] = useState(false);
+  const [weekSessions, setWeekSessions] = useState<CompletedWorkoutSession[]>([]);
 
   const loadSchedule = useCallback(() => getWeekSchedule().then(setSchedule), []);
   useFocusEffect(useCallback(() => {
     loadSchedule();
     void getAthleteProfile().then(setAthlete);
+    void getCompletedWorkoutSessions().then(setWeekSessions);
   }, [loadSchedule]));
+
+  const workflow = athlete ? getTrainingWorkflow(athlete) : null;
+
+  // Logging-only athletes get an entirely different screen below — no generated/open weekly grid
+  // at all, since even an honestly-empty seven-day list would still read as "SprintLab made you a
+  // schedule." Everything past this point is unchanged for the other three workflows.
+  if (workflow === 'log-only') {
+    return <LogOnlyPlanView sessions={weekSessions} palette={palette} styles={styles} router={router} />;
+  }
 
   const trainingDays = schedule.filter(day => day.kind === 'workout').length;
   const restDays = schedule.length - trainingDays;
   const selectedDay = schedule.find(day => day.dayIndex === selected);
-  const workflow = athlete ? getTrainingWorkflow(athlete) : null;
-  const manualWorkflow = workflow === 'coach-plan' || workflow === 'log-only';
-  const workflowTitle = workflow === 'log-only' ? 'Logging without a plan' : workflow === 'coach-plan' ? 'Coach plan protected' : 'Build from your speed profile';
-  const workflowCopy = workflow === 'log-only'
-    ? 'No generated calendar is required. Add sessions manually or start an unplanned workout whenever you train.'
-    : workflow === 'coach-plan'
-      ? 'SprintLab will not generate or replace your coach’s sessions. Keep editing the schedule manually.'
-      : workflow === 'combined'
-        ? 'Keep coach or manual sessions, then preview SprintLab recommendations for appropriate open days.'
-        : 'Preview a deterministic week selected from Approved library workouts.';
+  const manualWorkflow = workflow === 'coach-plan';
+  const workflowTitle = workflow === 'coach-plan' ? 'Coach-led training' : 'Build from your speed profile';
+  const workflowCopy = workflow === 'coach-plan'
+    ? 'SprintLab tracks and analyzes your training without replacing your coach’s programming. Add a session to any day, or log one you’ve already completed.'
+    : workflow === 'combined'
+      ? 'Keep coach or manual sessions, then preview SprintLab recommendations for appropriate open days.'
+      : 'Preview a deterministic week selected from Approved library workouts.';
 
   const editDay = (dayIndex: WeekdayIndex) => {
     tap();
@@ -133,7 +142,7 @@ export default function PlanScreen() {
     {schedule.map(day => {
       const isSelected = selected === day.dayIndex;
       const isToday = todayIndex === day.dayIndex;
-      const title = day.kind === 'workout' ? day.workout?.title || 'Workout' : day.restTitle || 'Rest day';
+      const title = day.kind === 'workout' ? day.workout?.title || 'Workout' : day.restTitle === OPEN_DAY_RESTTITLE ? 'Not scheduled' : day.restTitle || 'Rest day';
       const detail = day.kind === 'workout'
         ? `${day.workout?.durationMinutes ?? 0} min · ${day.workout?.sections.reduce((sum, section) => sum + section.exercises.length, 0) ?? 0} exercises`
         : day.restNote || 'No training scheduled';
@@ -221,4 +230,77 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   moveDay: { width: 42, height: 38, borderRadius: 10, backgroundColor: palette.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: palette.border },
   moveDayText: { color: palette.accent, fontSize: 10, fontWeight: '900' },
   moveHint: { color: palette.muted, fontSize: 10 },
+  logActions: { gap: 10 },
+  logAction: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 15, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, paddingHorizontal: 14 },
+  logActionIcon: { width: 36, height: 36, borderRadius: 12, backgroundColor: palette.accentDark, alignItems: 'center', justifyContent: 'center' },
+  logActionText: { flex: 1, color: palette.text, fontWeight: '800', fontSize: 14 },
+  logSessionRow: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  logSessionIcon: { width: 34, height: 34, borderRadius: 11, backgroundColor: palette.surface2, alignItems: 'center', justifyContent: 'center' },
+  logSessionTitle: { color: palette.text, fontWeight: '800', fontSize: 13 },
+  logSessionDate: { color: palette.muted, fontSize: 11, marginTop: 2 },
+  logEmptyCard: { alignItems: 'center', gap: 6, paddingVertical: 26 },
+  logEmptyTitle: { color: palette.text, fontSize: 14, fontWeight: '900' },
+  logEmptyCopy: { color: palette.muted, fontSize: 12, textAlign: 'center', maxWidth: 260 },
 });
+
+/** The entire Plan experience for a logging-only athlete — deliberately not the weekday grid used
+ * by the other three workflows, since even an honestly-empty seven-day list would still read as a
+ * SprintLab-generated schedule. Shows only what the athlete has actually logged. */
+function LogOnlyPlanView({ sessions, palette, styles, router }: {
+  sessions: CompletedWorkoutSession[];
+  palette: Palette;
+  styles: ReturnType<typeof createStyles>;
+  router: ReturnType<typeof useRouter>;
+}) {
+  const now = new Date();
+  const monday = new Date(now);
+  const isoWeekday = (now.getDay() + 6) % 7; // 0 = Monday
+  monday.setDate(now.getDate() - isoWeekday);
+  const mondayKey = toLocalDateKey(monday);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  const sundayKey = toLocalDateKey(sunday);
+
+  const thisWeek = sessions
+    .filter(session => {
+      const key = sessionDateKey(session);
+      return key >= mondayKey && key <= sundayKey;
+    })
+    .sort((a, b) => sessionDateKey(b).localeCompare(sessionDateKey(a)));
+
+  return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.page}>
+    <Eyebrow>Training log</Eyebrow>
+    <ScreenTitle subtitle="Train on your own schedule. Log sessions as you complete them and SprintLab will track your training and progress.">
+      Log your training
+    </ScreenTitle>
+
+    <View style={styles.logActions}>
+      <Pressable accessibilityRole="button" onPress={() => { tap(); router.push({ pathname: '/workout-builder', params: { mode: 'unplanned' } }); }} style={styles.logAction}>
+        <View style={styles.logActionIcon}><MaterialIcons name="add" size={19} color={palette.accent} /></View>
+        <Text style={styles.logActionText}>Log a workout</Text>
+        <MaterialIcons name="chevron-right" size={21} color={palette.muted} />
+      </Pressable>
+      <Pressable accessibilityRole="button" onPress={() => { tap(); router.push('/library'); }} style={styles.logAction}>
+        <View style={styles.logActionIcon}><MaterialIcons name="library-books" size={19} color={palette.accent} /></View>
+        <Text style={styles.logActionText}>Browse workout library</Text>
+        <MaterialIcons name="chevron-right" size={21} color={palette.muted} />
+      </Pressable>
+    </View>
+
+    <Eyebrow>This week</Eyebrow>
+    {thisWeek.length ? <Card style={{ gap: 4 }}>
+      {thisWeek.map((session, index) => <View key={session.id} style={[styles.logSessionRow, index > 0 && { borderTopWidth: 1, borderTopColor: palette.border }]}>
+        <View style={styles.logSessionIcon}><MaterialIcons name="check" size={17} color={palette.accent} /></View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.logSessionTitle}>{session.plannedWorkoutSnapshot.title}</Text>
+          <Text style={styles.logSessionDate}>{new Date(`${sessionDateKey(session)}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
+        </View>
+      </View>)}
+    </Card> : <Card style={styles.logEmptyCard}>
+      <MaterialIcons name="event-note" size={26} color={palette.muted} />
+      <Text style={styles.logEmptyTitle}>No sessions yet this week</Text>
+      <Text style={styles.logEmptyCopy}>Your workouts will appear here as you log them.</Text>
+    </Card>}
+    <AppFooter />
+  </ScrollView></SafeAreaView>;
+}

@@ -190,6 +190,24 @@ export type SessionTrainingContext = {
   painAreas: PainReport[];
 };
 
+/** The one in-progress rest countdown for the active session — persisted on the session itself
+ * (rather than kept only in component state) so it survives app backgrounding, phone locking, and
+ * normal navigation within the workout experience. Only one can exist at a time, which is what
+ * guarantees a single source of truth for "is a rest timer running right now." */
+export type RestTimerState = {
+  /** The exercise's actual prescribed rest — never a generic/invented duration. */
+  totalSeconds: number;
+  /** What's coming up after rest (e.g. "Rep 3", "Set 2", "Next exercise"). */
+  next: string;
+  running: boolean;
+  /** Absolute wall-clock time the countdown reaches zero. Only meaningful while running — the
+   * countdown is always derived from this timestamp vs. Date.now(), never a decremented counter,
+   * so it can't drift while JS execution is suspended (background/lock). */
+  endsAt?: string;
+  /** Authoritative remaining seconds while paused, not yet started, or just finished. */
+  remainingSeconds: number;
+};
+
 export type ActiveWorkoutSession = {
   id: string;
   plannedWorkoutSnapshot: PlannedWorkout;
@@ -205,6 +223,7 @@ export type ActiveWorkoutSession = {
   // Required for new records; optional here so completed prototype records still load.
   trainingContext?: SessionTrainingContext;
   actualResults: ActualExerciseResult[];
+  restTimer?: RestTimerState | null;
 };
 
 export type PostWorkoutReview = {

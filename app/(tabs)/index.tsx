@@ -1,5 +1,5 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Card, Eyebrow, PrimaryButton, SprintLabBrandLockup } from '@/components/sprint-ui';
@@ -14,16 +14,15 @@ import { getSessionCoverage } from '@/utils/workout-session';
 import { consumeSprintLabIntroLaunchRequest } from '@/utils/sprintlab-intro';
 import { completeStep, error, tap } from '@/utils/haptics';
 import { calculatePlanStreak } from '@/utils/streaks';
+import { OPEN_DAY_RESTTITLE } from '@/data/workouts';
 
 const dateKey = (date = new Date()) => date.toLocaleDateString('en-CA');
 
-/** The deterministic weekly-plan builder (utils/plan-selector.ts) writes this exact restTitle for
- * a day it simply had no session for — "genuinely unscheduled," not an intentional rest day. Any
- * other rest day (the starter schedule's Sunday, or a day the athlete explicitly marked as rest
- * via Plan) keeps its own restTitle and is treated as planned recovery. This reuses the existing
- * schedule data rather than adding a new "day type" field to ScheduledDay. */
-const OPEN_DAY_RESTTITLE = 'Open / existing training';
-
+/** OPEN_DAY_RESTTITLE marks a day SprintLab genuinely has nothing scheduled for — either the
+ * deterministic weekly-plan builder (utils/plan-selector.ts) leaving a slot open, or (per
+ * utils/storage.ts's getWeekSchedule) every day for a coach-led/logging-only athlete who hasn't
+ * added anything yet. Any OTHER rest day (the starter schedule's Sunday, or a day the athlete
+ * explicitly marked as rest via Plan) keeps its own restTitle and is treated as planned recovery. */
 function isIntentionalRestDay(day: ScheduledDay | null): boolean {
   return day?.kind === 'rest' && day.restTitle !== OPEN_DAY_RESTTITLE;
 }
@@ -66,7 +65,7 @@ export default function TodayScreen() {
   const [partialToday, setPartialToday] = useState<CompletedWorkoutSession | null>(null);
   const [planStreak, setPlanStreak] = useState(0);
   const [nextUp, setNextUp] = useState<NextUp | null>(null);
-  const { start: startIntroTour } = useSprintLabIntro();
+  const { start: startIntroTour, registerStartWorkoutAction } = useSprintLabIntro();
   const heroCardTarget = useIntroTarget('today-hero-card');
   const readinessTarget = useIntroTarget('today-readiness');
   // Re-runs on every focus (including the return trip from Workout Mode / Log), so "has today's
@@ -149,6 +148,12 @@ export default function TodayScreen() {
       error();
     }
   };
+  // Lets the intro tour's final reveal trigger this exact function (never a second, parallel
+  // "start a workout" implementation) — always the freshest closure, re-registered every render.
+  useEffect(() => {
+    registerStartWorkoutAction(startWorkout);
+    return () => registerStartWorkoutAction(null);
+  });
   const primaryLabel = activeSession
     ? `Resume ${workout?.title ?? 'workout'}`
     : readinessBlocksWorkout

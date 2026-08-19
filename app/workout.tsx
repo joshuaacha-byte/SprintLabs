@@ -23,6 +23,7 @@ import {
   RepFeeling,
   ResultChangeReason,
   ResultStatus,
+  RestTimerState,
 } from '@/types';
 import {
   clearActiveWorkoutSession,
@@ -35,6 +36,14 @@ import {
   inferTracking,
   withDerivedStatuses,
 } from '@/utils/workout-session';
+import {
+  addRestSeconds,
+  createRestTimer,
+  finishRestTimer,
+  pauseRestTimer,
+  restRemainingSeconds,
+  startRestTimer,
+} from '@/utils/rest-timer';
 import {
   completeStep,
   hapticComplete,
@@ -134,6 +143,61 @@ function NumberInput({
   />;
 }
 
+/** The rest countdown — always derived from restRemainingSeconds(restTimer, now), never a locally
+ * decremented number, so it reads correctly on the very first render after the app was backgrounded
+ * or the phone was locked. Three states: not yet started (prescribed duration shown, athlete opts
+ * in), running/paused (large live countdown), and finished (frozen at zero until dismissed). */
+function RestCard({ restTimer, now, palette, styles, onStartPause, onAddSeconds, onDismiss }: {
+  restTimer: RestTimerState;
+  now: number;
+  palette: Palette;
+  styles: ReturnType<typeof createStyles>;
+  onStartPause: () => void;
+  onAddSeconds: () => void;
+  onDismiss: () => void;
+}) {
+  const remaining = restRemainingSeconds(restTimer, now);
+  const finished = !restTimer.running && remaining <= 0;
+  const notStarted = !restTimer.running && !finished && remaining === restTimer.totalSeconds;
+
+  return <View style={styles.restCard}>
+    <View style={styles.restHead}>
+      <MaterialIcons name="timer" size={16} color={palette.accent} />
+      <Text style={styles.restEyebrow}>{finished ? 'REST COMPLETE' : 'REST'}</Text>
+      <Text numberOfLines={1} style={styles.restNext}>Next: {restTimer.next}</Text>
+    </View>
+    <Text style={styles.restClock}>{formatClock(remaining)}</Text>
+    {finished ? (
+      <Pressable accessibilityRole="button" onPress={onDismiss} style={styles.restPrimaryButton}>
+        <Text style={styles.restPrimaryButtonText}>Continue</Text>
+      </Pressable>
+    ) : notStarted ? (
+      <View style={styles.restControlsRow}>
+        <Pressable accessibilityRole="button" onPress={onStartPause} style={styles.restPrimaryButton}>
+          <Text style={styles.restPrimaryButtonText}>Start rest</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Skip rest" onPress={onDismiss} style={styles.restTextControl}>
+          <Text style={styles.restTextControlLabel}>Skip</Text>
+        </Pressable>
+      </View>
+    ) : (
+      <View style={styles.restControlsRow}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Add 30 seconds" onPress={onAddSeconds} style={styles.restTextControl}>
+          <Text style={styles.restTextControlLabel}>+30 sec</Text>
+        </Pressable>
+        <Text style={styles.restControlDot}>·</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel={restTimer.running ? 'Pause rest timer' : 'Resume rest timer'} onPress={onStartPause} style={styles.restTextControl}>
+          <Text style={styles.restTextControlLabel}>{restTimer.running ? 'Pause' : 'Resume'}</Text>
+        </Pressable>
+        <Text style={styles.restControlDot}>·</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="Skip rest" onPress={onDismiss} style={styles.restTextControl}>
+          <Text style={styles.restTextControlLabel}>Skip</Text>
+        </Pressable>
+      </View>
+    )}
+  </View>;
+}
+
 function DoneControl({ status, onPress, label }: { status: ResultStatus; onPress: () => void; label: string }) {
   const palette = useTheme();
   const styles = useMemo(() => createStyles(palette), [palette]);
@@ -190,7 +254,10 @@ export default function WorkoutScreen() {
   const [session, setSession] = useState<ActiveWorkoutSession | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
-  const [rest, setRest] = useState<{ seconds: number; running: boolean; next: string } | null>(null);
+  // Not the rest timer's source of truth (that's session.restTimer, persisted) — purely a render
+  // pulse so the countdown, which is always recomputed from restTimer.endsAt vs. this timestamp,
+  // visibly ticks once a second while running.
+  const [restNow, setRestNow] = useState(() => Date.now());
   const [feedback, setFeedback] = useState<{ exerciseId: string; unit: number } | null>(null);
   const [menuResult, setMenuResult] = useState<ActualExerciseResult | null>(null);
   const [editor, setEditor] = useState<'note' | 'prescription' | 'add' | 'replace' | null>(null);
@@ -222,6 +289,15 @@ export default function WorkoutScreen() {
     });
   }, [router]));
 
+  const updateSession = (change: (current: ActiveWorkoutSession) => ActiveWorkoutSession) => {
+    setSession(current => {
+      if (!current) return current;
+      const next = withDerivedStatuses(change(current));
+      void saveActiveWorkoutSession(next);
+      return next;
+    });
+  };
+
   const executionStartedAt = session?.executionStartedAt;
   useEffect(() => {
     if (!executionStartedAt) return;
@@ -234,27 +310,26 @@ export default function WorkoutScreen() {
     return () => clearInterval(timer);
   }, [executionStartedAt]);
 
+  const restTimer = session?.restTimer;
   useEffect(() => {
-    if (!rest?.running) return;
-    const timer = setInterval(() => setRest(current => {
-      if (!current || !current.running) return current;
-      if (current.seconds <= 1) {
+    if (!restTimer?.running) return;
+    const tick = () => {
+      const now = Date.now();
+      setRestNow(now);
+      if (restRemainingSeconds(restTimer, now) <= 0) {
         hapticSuccess();
-        return null;
+        // Freeze at zero rather than clearing it, so the athlete sees a clear "rest complete"
+        // state instead of the strip silently vanishing — dismissed only by their own tap.
+        updateSession(current => current.restTimer
+          ? { ...current, restTimer: finishRestTimer(current.restTimer) }
+          : current);
       }
-      return { ...current, seconds: current.seconds - 1 };
-    }), 1000);
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
-  }, [rest?.running]);
-
-  const updateSession = (change: (current: ActiveWorkoutSession) => ActiveWorkoutSession) => {
-    setSession(current => {
-      if (!current) return current;
-      const next = withDerivedStatuses(change(current));
-      void saveActiveWorkoutSession(next);
-      return next;
-    });
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restTimer?.running, restTimer?.endsAt]);
 
   const updateResult = (exerciseId: string, change: (result: ActualExerciseResult) => ActualExerciseResult) => {
     updateSession(current => ({
@@ -352,15 +427,17 @@ export default function WorkoutScreen() {
     ],
   );
 
+  // Makes the athlete's real prescribed rest immediately available after a rep/set, but never
+  // starts counting down on its own — the athlete has to tap Start. Also guarantees a single rest
+  // timer can ever exist: if one is already showing (from a previous rep), a newly completed rep
+  // doesn't silently reset or replace the athlete's in-progress rest.
   const beginRest = (exercise: PlannedExercise, next: string) => {
+    if (session?.restTimer) return;
     const tracking = exercise.tracking;
     const seconds = tracking.kind === 'track' || tracking.kind === 'strength'
       ? tracking.restSeconds
       : undefined;
-    if (seconds) {
-      hapticTimerToggle();
-      setRest({ seconds, running: true, next });
-    }
+    if (seconds) updateSession(current => ({ ...current, restTimer: createRestTimer(seconds, next) }));
   };
 
   const markTrackRep = (result: ActualExerciseResult, exercise: PlannedExercise, repNumber: number) => {
@@ -793,19 +870,26 @@ export default function WorkoutScreen() {
       </ScrollView>
 
       <View style={styles.activeFooter}>
-        {rest ? <View style={styles.restStrip}>
-          <View style={styles.restMain}>
-            <MaterialIcons name="timer" size={18} color={palette.accent} />
-            <Text style={styles.restText}>Rest {formatClock(rest.seconds)}</Text>
-            <Text numberOfLines={1} style={styles.nextText}>Next: {rest.next}</Text>
-          </View>
-          <Pressable accessibilityLabel={rest.running ? 'Pause rest timer' : 'Resume rest timer'} onPress={() => {
+        {restTimer ? <RestCard
+          restTimer={restTimer}
+          now={restNow}
+          palette={palette}
+          styles={styles}
+          onStartPause={() => {
             hapticTimerToggle();
-            setRest(current => current ? { ...current, running: !current.running } : current);
-          }} style={styles.restControl}><Text style={styles.restControlText}>{rest.running ? 'Pause' : 'Resume'}</Text></Pressable>
-          <Pressable accessibilityLabel="Add 30 seconds" onPress={() => { tap(); setRest(current => current ? { ...current, seconds: current.seconds + 30 } : current); }} style={styles.restControl}><Text style={styles.restControlText}>+30</Text></Pressable>
-          <Pressable accessibilityLabel="Dismiss rest timer" onPress={() => { tap(); setRest(null); }} hitSlop={8}><MaterialIcons name="close" size={18} color={palette.muted} /></Pressable>
-        </View> : null}
+            updateSession(current => current.restTimer
+              ? { ...current, restTimer: current.restTimer.running ? pauseRestTimer(current.restTimer) : startRestTimer(current.restTimer) }
+              : current);
+          }}
+          onAddSeconds={() => {
+            tap();
+            updateSession(current => current.restTimer ? { ...current, restTimer: addRestSeconds(current.restTimer, 30) } : current);
+          }}
+          onDismiss={() => {
+            tap();
+            updateSession(current => ({ ...current, restTimer: null }));
+          }}
+        /> : null}
         <PrimaryButton title={bottomTitle} onPress={bottomAction} disabled={bottomDisabled} />
         {totalProgress.resolved !== totalProgress.total ? <Pressable accessibilityRole="button" onPress={endWorkoutEarly} style={styles.endEarlyLink}>
           <Text style={styles.endEarlyLinkText}>End workout early</Text>
@@ -950,12 +1034,17 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   activeFooter: { padding: 12, paddingTop: 9, gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.border, backgroundColor: palette.bg },
   endEarlyLink: { minHeight: 34, alignItems: 'center', justifyContent: 'center' },
   endEarlyLinkText: { color: palette.muted, fontSize: 12, fontWeight: '700' },
-  restStrip: { minHeight: 48, borderRadius: 13, backgroundColor: palette.surface, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, gap: 8 },
-  restMain: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  restText: { color: palette.text, fontSize: 12, fontWeight: '900', fontVariant: ['tabular-nums'] },
-  nextText: { color: palette.muted, fontSize: 10, flex: 1 },
-  restControl: { minHeight: 34, paddingHorizontal: 7, justifyContent: 'center' },
-  restControlText: { color: palette.accent, fontSize: 10, fontWeight: '900' },
+  restCard: { borderRadius: 16, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.accentDark, paddingHorizontal: 14, paddingVertical: 10, gap: 4, alignItems: 'center' },
+  restHead: { alignSelf: 'stretch', flexDirection: 'row', alignItems: 'center', gap: 6 },
+  restEyebrow: { color: palette.accent, fontSize: 10, fontWeight: '900', letterSpacing: 1.2 },
+  restNext: { flex: 1, textAlign: 'right', color: palette.muted, fontSize: 10, fontWeight: '700' },
+  restClock: { color: palette.text, fontSize: 34, lineHeight: 38, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  restControlsRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
+  restControlDot: { color: palette.border, fontSize: 13, fontWeight: '900' },
+  restTextControl: { minHeight: 34, paddingHorizontal: 4, justifyContent: 'center' },
+  restTextControlLabel: { color: palette.accent, fontSize: 12, fontWeight: '900' },
+  restPrimaryButton: { minHeight: 38, borderRadius: 11, backgroundColor: palette.accent, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center' },
+  restPrimaryButtonText: { color: '#080D12', fontSize: 13, fontWeight: '900' },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.68)', justifyContent: 'flex-end' },
   menuSheet: { backgroundColor: palette.surface, borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 16, paddingBottom: 30, gap: 4, width: '100%', maxWidth: 820, alignSelf: 'center' },
   sheetHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: palette.border, alignSelf: 'center', marginBottom: 9 },

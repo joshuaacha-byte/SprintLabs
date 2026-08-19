@@ -234,6 +234,17 @@ export async function saveAthleteProfile(profile: AthleteProfile) {
   return migrated;
 }
 
+/** Developer Tools' "Reset first-launch flags" — flips the saved profile's own
+ * `onboardingComplete` back to false so the app's real mandatory-onboarding redirect
+ * (app/_layout.tsx) genuinely fires again on the next launch, without touching any other saved
+ * field (sports, goals, schedule, targets, etc.) or any plan/history/log data. A no-op if no
+ * profile has been saved yet. */
+export async function resetOnboardingCompletionFlag(): Promise<void> {
+  const profile = await getAthleteProfile();
+  if (!profile) return;
+  await saveAthleteProfile({ ...profile, onboardingComplete: false });
+}
+
 export async function getAthleteOnboardingDraft(): Promise<AthleteOnboardingDraft | null> {
   const value = await AsyncStorage.getItem(ONBOARDING_KEY);
   if (!value) return null;

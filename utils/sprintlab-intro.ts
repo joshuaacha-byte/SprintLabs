@@ -21,6 +21,13 @@ export async function markSprintLabIntroSeen(): Promise<void> {
   await AsyncStorage.setItem(INTRO_SEEN_KEY, 'true');
 }
 
+/** Developer Tools' "Reset first-launch flags" — clears only the "have I seen the tour" flag so
+ * the automatic first-run trigger (app/plan-preview.tsx) can genuinely fire again on the next
+ * real first-plan-generation moment. Never touches the athlete's plan/history/logs. */
+export async function resetSprintLabIntroSeen(): Promise<void> {
+  await AsyncStorage.removeItem(INTRO_SEEN_KEY);
+}
+
 export async function requestSprintLabIntroLaunch(): Promise<void> {
   await AsyncStorage.setItem(INTRO_LAUNCH_REQUEST_KEY, 'true');
 }

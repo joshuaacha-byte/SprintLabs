@@ -2,7 +2,7 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useSprintLabIntro } from '@/components/sprintlab-intro-context';
+import { useSprintLabIntro, type TodaysSessionPreview } from '@/components/sprintlab-intro-context';
 import { Palette, useTheme } from '@/constants/sprintlab';
 import { SPRINTLAB_INTRO_COACH_CHIPS } from '@/utils/sprintlab-intro-steps';
 import { completeStep, tap } from '@/utils/haptics';
@@ -22,7 +22,7 @@ export function SprintLabIntroOverlay() {
   const styles = useMemo(() => createStyles(palette), [palette]);
   const insets = useSafeAreaInsets();
   const { width: winW, height: winH } = useWindowDimensions();
-  const { isActive, step, stepIndex, stepCount, next, skip, getTarget } = useSprintLabIntro();
+  const { isActive, step, stepIndex, stepCount, next, skip, getTarget, todaysSessionPreview, startTodaysWorkout } = useSprintLabIntro();
   const [rect, setRect] = useState<Rect | null>(null);
   const pulse = useRef(new Animated.Value(0)).current;
 
@@ -67,7 +67,11 @@ export function SprintLabIntroOverlay() {
   if (!isActive || !step) return null;
 
   const advance = () => { tap(); next(); };
-  const finish = () => { completeStep(); next(); };
+  // Ends the tour and immediately triggers Today's own real "start workout" action — the exact
+  // same function its primary button calls, never a second implementation. If readiness isn't
+  // complete yet, that function is already a safe no-op (same as tapping the real, disabled
+  // button would be), so this can never start something the athlete hasn't actually cleared.
+  const finish = () => { completeStep(); next(); startTodaysWorkout(); };
   const dismiss = () => { tap(); skip(); };
 
   const hasSpotlight = Boolean(step.targetId);
@@ -79,7 +83,6 @@ export function SprintLabIntroOverlay() {
   // overlap the real launcher underneath.
   const isCoachStep = step.id === 'coach';
   const cardLeft = isCoachStep ? Math.max(20, winW - cardWidth - 20) : (winW - cardWidth) / 2;
-  const coachClearance = 300;
 
   const header = <View style={styles.headerRow}>
     <View style={styles.dots}>
@@ -94,6 +97,7 @@ export function SprintLabIntroOverlay() {
 
   const extra = step.id === 'readiness' ? <ReadinessDemo palette={palette} styles={styles} pulse={pulse} />
     : step.id === 'coach' ? <CoachChips styles={styles} />
+    : step.id === 'final' ? <SessionPreviewCard styles={styles} preview={todaysSessionPreview} />
     : null;
 
   const body = <View style={styles.cardBody}>
@@ -103,7 +107,8 @@ export function SprintLabIntroOverlay() {
     <Text style={styles.copy}>{step.body}</Text>
     {extra}
     <Pressable accessibilityRole="button" onPress={step.id === 'final' ? finish : advance} style={({ pressed }) => [styles.nextButton, pressed && styles.nextButtonPressed]}>
-      <Text style={styles.nextButtonText}>{step.id === 'final' ? 'Start training' : 'Next'}</Text>
+      <Text style={styles.nextButtonText}>{step.id === 'final' ? 'Start first session' : 'Next'}</Text>
+      {step.id === 'final' ? <MaterialIcons name="arrow-forward" size={16} color="#0B1000" /> : null}
     </Pressable>
   </View>;
 
@@ -116,9 +121,14 @@ export function SprintLabIntroOverlay() {
       <View style={[
         styles.tooltipCard,
         { width: cardWidth, left: cardLeft },
-        placeBelow
-          ? { top: Math.min(rect.y + rect.height + 14, winH - insets.bottom - 250) }
-          : { top: Math.max(insets.top + 14, rect.y - 14 - (isCoachStep ? coachClearance : 250)) },
+        // The coach launcher lives fixed bottom-right — always anchor this one card near the TOP
+        // of the screen instead of hugging the target, so the entire real widget (plus its glow)
+        // stays clearly visible with obvious separation below the card, never partially covered.
+        isCoachStep
+          ? { top: insets.top + 14 }
+          : placeBelow
+            ? { top: Math.min(rect.y + rect.height + 14, winH - insets.bottom - 250) }
+            : { top: Math.max(insets.top + 14, rect.y - 14 - 250) },
       ]}>
         {body}
       </View>
@@ -179,8 +189,17 @@ function ReadinessDemo({ palette, styles, pulse }: { palette: Palette; styles: R
 function CoachChips({ styles }: { styles: ReturnType<typeof createStyles> }) {
   return <View style={styles.chipWrap}>
     {SPRINTLAB_INTRO_COACH_CHIPS.map(chip => (
-      <View key={chip} style={styles.demoChip}><Text style={styles.demoChipText} numberOfLines={1}>{chip}</Text></View>
+      <View key={chip} style={[styles.demoChip, styles.chipCompact]}><Text style={styles.demoChipText} numberOfLines={1}>{chip}</Text></View>
     ))}
+  </View>;
+}
+
+function SessionPreviewCard({ styles, preview }: { styles: ReturnType<typeof createStyles>; preview: TodaysSessionPreview | null }) {
+  if (!preview) return null;
+  return <View style={styles.sessionPreview}>
+    <Text style={styles.sessionPreviewEyebrow}>TODAY</Text>
+    <Text style={styles.sessionPreviewTitle} numberOfLines={2}>{preview.title}</Text>
+    {preview.sectionTitles.length ? <Text style={styles.sessionPreviewSections} numberOfLines={1}>{preview.sectionTitles.join(' · ')}</Text> : null}
   </View>;
 }
 
@@ -215,8 +234,13 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   demoChipAccent: { backgroundColor: palette.accentDark, borderColor: palette.accent },
   demoChipText: { color: palette.text, fontSize: 11, fontWeight: '800' },
   demoChipTextAccent: { color: palette.accent },
-  chipWrap: { gap: 7, marginTop: 2 },
-  nextButton: { minHeight: 46, borderRadius: 13, backgroundColor: palette.accent, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
+  chipWrap: { gap: 5, marginTop: 0 },
+  chipCompact: { minHeight: 26, paddingHorizontal: 9 },
+  sessionPreview: { gap: 3, borderRadius: 14, borderWidth: 1, borderColor: palette.accentDark, backgroundColor: palette.accentDark, padding: 13, marginTop: 2 },
+  sessionPreviewEyebrow: { color: palette.accent, fontSize: 9, fontWeight: '900', letterSpacing: 1.4 },
+  sessionPreviewTitle: { color: palette.text, fontSize: 16, lineHeight: 21, fontWeight: '900', marginTop: 1 },
+  sessionPreviewSections: { color: palette.muted, fontSize: 11, fontWeight: '700', marginTop: 2 },
+  nextButton: { minHeight: 46, borderRadius: 13, backgroundColor: palette.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 4 },
   nextButtonPressed: { opacity: 0.85 },
   nextButtonText: { color: '#0B1000', fontSize: 14, fontWeight: '900' },
 });

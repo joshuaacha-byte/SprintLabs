@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createBlankWorkout, defaultWeekSchedule, todayWorkout, weekdayLabels } from '@/data/workouts';
+import { createBlankWorkout, defaultWeekSchedule, openWeekSchedule, todayWorkout, weekdayLabels } from '@/data/workouts';
+import { getAthleteProfile, getTrainingWorkflow } from '@/utils/athlete-profile';
 import {
   ActiveWorkoutSession,
   CompletedWorkoutSession,
@@ -190,45 +191,81 @@ const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const isWeekdayIndex = (value: number): value is WeekdayIndex =>
   Number.isInteger(value) && value >= 0 && value <= 6;
 
-function normalizeSchedule(raw: unknown): ScheduledDay[] {
+/** Reconciles stored day data against a 7-day TEMPLATE — `defaultWeekSchedule`'s authored starter
+ * content for a SprintLab-generated week, or `openWeekSchedule()`'s all-open days for a coach-led
+ * or logging-only athlete (see getScheduleTemplate below). Every fallback (a day missing from
+ * storage, or a workout-kind day missing its workout) resolves against THIS template, never a
+ * hardcoded default — that's what keeps a coach-plan athlete's five untouched days genuinely open
+ * instead of silently backfilled with canned sprint sessions. */
+function normalizeSchedule(raw: unknown, template: ScheduledDay[]): ScheduledDay[] {
   const stored = Array.isArray(raw) ? raw as Partial<ScheduledDay>[] : [];
-  return defaultWeekSchedule.map(defaultDay => {
-    const candidate = stored.find(day => day.dayIndex === defaultDay.dayIndex);
-    if (!candidate) return clone(defaultDay);
+  return template.map(templateDay => {
+    const candidate = stored.find(day => day.dayIndex === templateDay.dayIndex);
+    if (!candidate) return clone(templateDay);
     if (candidate.kind === 'rest') {
       return {
-        dayIndex: defaultDay.dayIndex,
-        shortLabel: weekdayLabels[defaultDay.dayIndex].short,
-        fullLabel: weekdayLabels[defaultDay.dayIndex].full,
+        dayIndex: templateDay.dayIndex,
+        shortLabel: weekdayLabels[templateDay.dayIndex].short,
+        fullLabel: weekdayLabels[templateDay.dayIndex].full,
         kind: 'rest',
-        restTitle: candidate.restTitle || 'Rest day',
-        restNote: candidate.restNote || 'No training is scheduled.',
+        restTitle: candidate.restTitle || templateDay.restTitle || 'Rest day',
+        restNote: candidate.restNote || templateDay.restNote || 'No training is scheduled.',
       };
     }
-    const fallback = defaultDay.workout ?? createBlankWorkout(defaultDay.dayIndex);
+    const fallback = candidate.workout ?? templateDay.workout ?? createBlankWorkout(templateDay.dayIndex);
     return {
-      dayIndex: defaultDay.dayIndex,
-      shortLabel: weekdayLabels[defaultDay.dayIndex].short,
-      fullLabel: weekdayLabels[defaultDay.dayIndex].full,
+      dayIndex: templateDay.dayIndex,
+      shortLabel: weekdayLabels[templateDay.dayIndex].short,
+      fullLabel: weekdayLabels[templateDay.dayIndex].full,
       kind: 'workout',
       workout: normalizePlannedWorkout(candidate.workout, fallback),
     };
   });
 }
 
-export async function getWeekSchedule(): Promise<ScheduledDay[]> {
-  const value = await AsyncStorage.getItem(WEEK_SCHEDULE);
-  if (value) return normalizeSchedule(JSON.parse(value));
+/** SprintLab only ever fabricates a starter week for the workflow that's actually supposed to
+ * have one. A coach-led or logging-only athlete's recurring week starts (and stays) genuinely
+ * open until THEY add something — never backfilled with the authored default schedule. Returns
+ * `defaultWeekSchedule` when the athlete hasn't answered this onboarding question yet (or has no
+ * profile at all), preserving the exact prior behavior for that case. */
+async function getScheduleTemplate(): Promise<ScheduledDay[]> {
+  const profile = await getAthleteProfile();
+  const workflow = profile ? getTrainingWorkflow(profile) : null;
+  return workflow === 'coach-plan' || workflow === 'log-only' ? openWeekSchedule() : defaultWeekSchedule;
+}
 
-  const schedule = clone(defaultWeekSchedule);
-  const legacyWorkout = await AsyncStorage.getItem(TODAY_WORKOUT);
-  if (legacyWorkout) {
-    const monday = schedule.find(day => day.dayIndex === 1);
-    if (monday) {
-      monday.kind = 'workout';
-      monday.workout = normalizePlannedWorkout(JSON.parse(legacyWorkout), todayWorkout);
-      monday.restTitle = undefined;
-      monday.restNote = undefined;
+export async function getWeekSchedule(): Promise<ScheduledDay[]> {
+  const [value, template, saved] = await Promise.all([
+    AsyncStorage.getItem(WEEK_SCHEDULE),
+    getScheduleTemplate(),
+    hasSavedWeekSchedule(),
+  ]);
+  const usesOpenTemplate = template !== defaultWeekSchedule;
+
+  if (value) {
+    // Local data from before this fix (or from a workflow the athlete has since changed away
+    // from) can still hold an auto-seeded fake week — but only ever replace it here when it was
+    // never genuinely saved by the athlete (hasSavedWeekSchedule). A real saved schedule (their
+    // own SprintLab week, or a coach-plan day they added themselves) is never touched.
+    if (usesOpenTemplate && !saved) {
+      const opened = clone(template);
+      await AsyncStorage.setItem(WEEK_SCHEDULE, JSON.stringify(opened));
+      return opened;
+    }
+    return normalizeSchedule(JSON.parse(value), template);
+  }
+
+  const schedule = clone(template);
+  if (!usesOpenTemplate) {
+    const legacyWorkout = await AsyncStorage.getItem(TODAY_WORKOUT);
+    if (legacyWorkout) {
+      const monday = schedule.find(day => day.dayIndex === 1);
+      if (monday) {
+        monday.kind = 'workout';
+        monday.workout = normalizePlannedWorkout(JSON.parse(legacyWorkout), todayWorkout);
+        monday.restTitle = undefined;
+        monday.restNote = undefined;
+      }
     }
   }
   await AsyncStorage.setItem(WEEK_SCHEDULE, JSON.stringify(schedule));
@@ -249,7 +286,7 @@ export async function getScheduleHistory(): Promise<ScheduleHistoryEntry[]> {
 }
 
 export async function saveWeekSchedule(schedule: ScheduledDay[]) {
-  const normalized = normalizeSchedule(schedule);
+  const normalized = normalizeSchedule(schedule, await getScheduleTemplate());
   const today = localDateKey();
   const history = await getScheduleHistory();
   const nextHistory = [...history.filter(entry => entry.effectiveFrom !== today), { effectiveFrom: today, schedule: normalized }]
@@ -438,4 +475,11 @@ export async function addDismissedCoachTriggerId(id: string) {
   if (existing.includes(id)) return;
   const next = [...existing, id].slice(-DISMISSED_COACH_TRIGGERS_MAX_ENTRIES);
   await AsyncStorage.setItem(DISMISSED_COACH_TRIGGERS, JSON.stringify(next));
+}
+
+/** Developer Tools' "Reset Coach test state" — the other half of it (see also
+ * utils/coach-discovery.ts's resetCoachIntroSeen). Lets a previously-dismissed local trigger
+ * (missed workout, high RPE, low readiness, etc.) become eligible to surface again for testing. */
+export async function clearDismissedCoachTriggerIds() {
+  await AsyncStorage.removeItem(DISMISSED_COACH_TRIGGERS);
 }

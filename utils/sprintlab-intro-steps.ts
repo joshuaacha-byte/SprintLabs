@@ -37,8 +37,8 @@ export const SPRINTLAB_INTRO_STEPS: SprintLabIntroStep[] = [
   {
     id: 'final',
     eyebrow: 'SprintLab',
-    title: 'You’re ready.',
-    body: 'Your first session is waiting.',
+    title: 'You’re ready to train.',
+    body: 'Your plan is built. Your first session is waiting.',
   },
 ];
 

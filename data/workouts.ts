@@ -262,6 +262,25 @@ export const defaultWeekSchedule: ScheduledDay[] = [
   { dayIndex: 0, shortLabel: 'SUN', fullLabel: 'Sunday', kind: 'rest', restTitle: 'Rest day', restNote: 'No training is scheduled. Focus on recovery and prepare for the next week.' },
 ];
 
+/** The recurring-week fallback for athletes whose training isn't SprintLab-generated — coach-led
+ * or logging-only workflows (see utils/athlete-profile.ts's getTrainingWorkflow). Every day is
+ * genuinely open, never a fabricated training/rest structure. `restTitle === OPEN_DAY_RESTTITLE`
+ * is how Today/Plan tell "SprintLab simply has nothing scheduled here" apart from an athlete's own
+ * intentional rest day. */
+export const OPEN_DAY_RESTTITLE = 'Open / existing training';
+const OPEN_DAY_RESTNOTE = 'No SprintLab session is scheduled. Team practice, coach work, and recovery still count as training.';
+
+export function openWeekSchedule(): ScheduledDay[] {
+  return ([0, 1, 2, 3, 4, 5, 6] as WeekdayIndex[]).map(dayIndex => ({
+    dayIndex,
+    shortLabel: weekdayLabels[dayIndex].short,
+    fullLabel: weekdayLabels[dayIndex].full,
+    kind: 'rest' as const,
+    restTitle: OPEN_DAY_RESTTITLE,
+    restNote: OPEN_DAY_RESTNOTE,
+  }));
+}
+
 export function createBlankWorkout(dayIndex: WeekdayIndex): PlannedWorkout {
   return {
     id: `workout-${dayIndex}-${Date.now()}`,

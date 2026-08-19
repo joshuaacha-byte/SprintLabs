@@ -10,12 +10,14 @@ import { Card, Eyebrow, PrimaryButton, ScreenTitle } from '@/components/sprint-u
 import { Palette, useTheme } from '@/constants/sprintlab';
 import { workoutLibrarySourceSummary } from '@/data/workout-sources';
 import type { AthleteProfile, MeetPriority } from '@/types';
-import { athleteFirstName, getAthleteProfile, getTrainingWorkflow, resetAllSprintLabLocalData, saveAthleteProfile, trainingWorkflowLabel } from '@/utils/athlete-profile';
+import { athleteFirstName, getAthleteProfile, getTrainingWorkflow, resetAllSprintLabLocalData, resetOnboardingCompletionFlag, saveAthleteProfile, trainingWorkflowLabel } from '@/utils/athlete-profile';
 import { deriveSeasonPhase } from '@/utils/season-engine';
 import { reminderTimeLabel, scheduleWorkoutReminderTest, syncWorkoutReminders } from '@/utils/workout-reminders';
 import { getThemePreference, saveThemePreference, type ThemePreference } from '@/utils/theme-preference';
-import { requestSprintLabIntroLaunch } from '@/utils/sprintlab-intro';
-import { getNotificationPermissionStatus } from '@/utils/notification-permission';
+import { requestSprintLabIntroLaunch, resetSprintLabIntroSeen } from '@/utils/sprintlab-intro';
+import { getNotificationPermissionStatus, resetNotificationOptInDecision } from '@/utils/notification-permission';
+import { resetCoachIntroSeen } from '@/utils/coach-discovery';
+import { clearDismissedCoachTriggerIds } from '@/utils/storage';
 import { completeStep, error, selection, success, tap, warning } from '@/utils/haptics';
 
 const pretty = (value: string) => value.replaceAll('-', ' ').replace(/\b\w/g, letter => letter.toUpperCase());
@@ -126,6 +128,31 @@ export default function SettingsScreen() {
         },
       ],
     );
+  };
+
+  // Developer Tools: lightweight, non-destructive testing controls. None of these touch the
+  // athlete's saved profile answers, plan, workout history, logs, or PRs — each clears/flips
+  // exactly the one narrow flag its name describes. Kept visible in every build (no __DEV__ gate)
+  // until this section is deliberately removed before public release.
+  const resetFirstLaunchFlags = async () => {
+    tap();
+    await Promise.all([resetOnboardingCompletionFlag(), resetSprintLabIntroSeen()]);
+    success();
+    Alert.alert('First-launch flags reset', 'Close and reopen SprintLab to see the real first-launch sequence. Your profile, plan, and history are unchanged.');
+  };
+
+  const resetNotificationSetup = async () => {
+    tap();
+    await resetNotificationOptInDecision();
+    success();
+    Alert.alert('Notification setup reset', 'SprintLab will treat notification opt-in as never asked again. This does not change the device’s actual system notification permission.');
+  };
+
+  const resetCoachTestState = async () => {
+    tap();
+    await Promise.all([resetCoachIntroSeen(), clearDismissedCoachTriggerIds()]);
+    success();
+    Alert.alert('Coach test state reset', 'The “Ask Coach” intro bubble and dismissed local triggers can surface again. Coach’s conversation itself isn’t saved between launches, so there’s nothing else to clear.');
   };
 
   const addCompetition = async () => {
@@ -371,22 +398,47 @@ export default function SettingsScreen() {
           </View>
         </Card>
 
-        <Pressable accessibilityRole="button" onPress={() => void replayIntroTour()} style={styles.replayIntro}>
-          <MaterialIcons name="play-circle-outline" size={15} color={palette.muted} />
-          <Text style={styles.replayIntroText}>Replay the SprintLab intro</Text>
-        </Pressable>
+        <Card style={styles.devCard}>
+          <Eyebrow>Developer Tools</Eyebrow>
+          <Text style={styles.cardTitle}>Internal testing panel</Text>
+          <Text style={styles.cardCopy}>Visible in every build, including EAS/TestFlight, until this section is deliberately removed before public release.</Text>
 
-        {__DEV__ ? (
-          <Card style={styles.devCard}>
-            <Eyebrow>Development</Eyebrow>
-            <Text style={styles.cardTitle}>Testing controls</Text>
-            <Text style={styles.cardCopy}>Use this only when you intentionally want a completely clean local app.</Text>
-            <Pressable onPress={resetApp} style={styles.dangerButton}>
-              <MaterialIcons name="delete-forever" size={20} color={palette.red} />
-              <Text style={styles.dangerText}>Erase all local app data</Text>
+          <Text style={styles.devSectionLabel}>REPLAY</Text>
+          <View style={styles.devRowGroup}>
+            <Pressable accessibilityRole="button" onPress={editProfile} style={styles.devRow}>
+              <View style={styles.devRowIcon}><MaterialIcons name="replay" size={17} color={palette.accent} /></View>
+              <Text style={styles.devRowText}>Replay onboarding</Text>
+              <MaterialIcons name="chevron-right" size={19} color={palette.muted} />
             </Pressable>
-          </Card>
-        ) : null}
+            <Pressable accessibilityRole="button" onPress={() => void replayIntroTour()} style={styles.devRow}>
+              <View style={styles.devRowIcon}><MaterialIcons name="play-circle-outline" size={17} color={palette.accent} /></View>
+              <Text style={styles.devRowText}>Replay SprintLab intro</Text>
+              <MaterialIcons name="chevron-right" size={19} color={palette.muted} />
+            </Pressable>
+          </View>
+
+          <Text style={styles.devSectionLabel}>RESET TESTING STATE</Text>
+          <View style={styles.devRowGroup}>
+            <Pressable accessibilityRole="button" onPress={() => void resetFirstLaunchFlags()} style={styles.devRow}>
+              <View style={styles.devRowIcon}><MaterialIcons name="restart-alt" size={17} color={palette.accent} /></View>
+              <Text style={styles.devRowText}>Reset first-launch flags</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" onPress={() => void resetNotificationSetup()} style={styles.devRow}>
+              <View style={styles.devRowIcon}><MaterialIcons name="notifications-off" size={17} color={palette.accent} /></View>
+              <Text style={styles.devRowText}>Reset notification setup</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" onPress={() => void resetCoachTestState()} style={styles.devRow}>
+              <View style={styles.devRowIcon}><MaterialIcons name="forum" size={17} color={palette.accent} /></View>
+              <Text style={styles.devRowText}>Reset Coach test state</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.devDivider} />
+          <Pressable onPress={resetApp} style={styles.dangerButton}>
+            <MaterialIcons name="delete-forever" size={20} color={palette.red} />
+            <Text style={styles.dangerText}>Erase all local app data</Text>
+          </Pressable>
+        </Card>
         <AppFooter />
       </ScrollView>
     </SafeAreaView>
@@ -466,9 +518,13 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   themeOptionTextSelected: { color: palette.accent },
   textAction: { minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: palette.border, paddingTop: 10 },
   textActionLabel: { color: palette.accent, fontSize: 12, fontWeight: '900' },
-  replayIntro: { minHeight: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, alignSelf: 'center' },
-  replayIntroText: { color: palette.muted, fontSize: 11, fontWeight: '700' },
-  devCard: { gap: 10, borderColor: '#54262A' },
+  devCard: { gap: 12, borderColor: palette.border },
+  devSectionLabel: { color: palette.muted, fontSize: 10, fontWeight: '900', letterSpacing: 1, marginTop: 2 },
+  devRowGroup: { gap: 8 },
+  devRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 12, backgroundColor: palette.surface2, paddingHorizontal: 12 },
+  devRowIcon: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
+  devRowText: { flex: 1, color: palette.text, fontSize: 13, fontWeight: '800' },
+  devDivider: { height: 1, backgroundColor: palette.border, marginVertical: 2 },
   dangerButton: { minHeight: 48, borderRadius: 13, backgroundColor: '#2A1418', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   dangerText: { color: palette.red, fontWeight: '900', fontSize: 13 },
 });
