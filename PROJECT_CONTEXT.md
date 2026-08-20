@@ -1,6 +1,6 @@
 # SprintLab Project Context and Handoff
 
-Last updated: August 16, 2026 (notification permission flow pass)
+Last updated: August 19, 2026 (Coach deployed-backend fix)
 
 Read this document before making product or code changes. It preserves the decisions, goals, completed work, known issues, and next steps from the original planning and prototype sessions.
 
@@ -707,4 +707,17 @@ The in-app rest timer had not actually disappeared — `app/workout.tsx` already
 - **Reset notification setup** — new `resetNotificationOptInDecision()` (notification-permission.ts) clears only SprintLab's own opt-in-decision flag; explicitly does not and cannot touch the real OS permission, which only the device's own Settings can reset.
 - **Reset Coach test state** — new `resetCoachIntroSeen()` (coach-discovery.ts) + `clearDismissedCoachTriggerIds()` (storage.ts). Coach's conversation itself is never persisted (`components/coach-context.tsx` already starts empty every launch), so there was nothing to invent there — confirmed by an `AsyncStorage` grep across every coach-related file before deciding what this button actually does.
 - Investigated and deliberately did **not** add a "Reset milestone/celebration state" control: `utils/milestones.ts` and the workout-completion celebration (`utils/streaks.ts`) hold no persisted "already seen" flag at all — every milestone/celebration is derived live from real completed-session/streak data on each computation, so there is no flag to reset; the achievement already "replays" naturally whenever the underlying real condition is met again.
+
+## Coach: deployed API backend, fixing "Split couldn't reach SprintLab" in installed builds (August 19, 2026)
+
+**Bug**: Coach worked in local dev but failed from an installed EAS build with a generic network error. **Root cause**: `components/coach-context.tsx` called `fetch('/api/coach', ...)` — a bare relative path. `app/api/coach+api.ts` is an Expo Router API route, a server-side handler that only ever runs under the Metro dev server (which serves `/api/*` over the same connection as the JS bundle) or a genuinely deployed server export — it was **never** bundled into the native EAS app binary, and no server had ever actually been deployed anywhere. In a standalone installed build with no Metro attached, the relative fetch had no origin to resolve against and failed client-side before any request left the device, landing in the generic `COACH_ERROR_COPY.network` catch.
+
+**Fix implemented (not just diagnosed):**
+- Ran `npx expo export -p web` (uses the existing `app.json` `web.output: "server"`) then `eas deploy --prod`, which deployed `app/api/coach+api.ts` as a real hosted server at `https://sprintlab.expo.app` (stable production alias; the CLI also produces a fresh per-deployment URL each time, but the app should always target the stable alias). Verified end-to-end with `curl` against `https://sprintlab.expo.app/api/coach` — confirmed a real Gemini round trip, not just a reachable route.
+- Set `GEMINI_API_KEY` as an EAS **project environment variable** (`eas env:set production --name GEMINI_API_KEY --visibility sensitive`) so the deployed server has it at runtime — the key was already read correctly server-side (`process.env.GEMINI_API_KEY` in `coach+api.ts`) and is still never sent to or bundled into the client.
+- Set `EXPO_PUBLIC_API_BASE_URL=https://sprintlab.expo.app` as an EAS environment variable for all three build environments (development/preview/production), so it gets inlined into the client bundle at `eas build` time.
+- `components/coach-context.tsx` now builds its request URL as `` `${process.env.EXPO_PUBLIC_API_BASE_URL ?? ''}/api/coach` `` instead of a bare relative path. When the env var is unset (local `expo start`, where `.env.local` deliberately has no `EXPO_PUBLIC_API_BASE_URL`), this still resolves to the same relative `/api/coach` that already worked in dev. In an EAS build, it resolves to the deployed server's absolute URL.
+- Added temporary `[Coach]`/`[coach api]` diagnostic `console` logging (client-side gated behind `__DEV__`, server-side unconditional since server logs are already environment-appropriate) distinguishing: request never reached a server (network/DNS failure), 429 rate limit, other non-2xx response, malformed/unparseable response body, missing `GEMINI_API_KEY` on the server, Gemini returning empty/unparseable output, and any other unhandled Gemini-call exception. These are intentionally temporary and can be stripped later.
+- **Redeploying after future `app/api/coach+api.ts` changes** requires re-running `npx expo export -p web && npx eas deploy --prod` — this does not happen automatically on `eas build` or `git push`.
+- `npx tsc --noEmit` and `npx expo lint` both pass clean.
 - Verified in-browser: the panel renders unconditionally (no `__DEV__` check remains in the source), and each of the three reset buttons was fired against seeded flag values and confirmed via direct `localStorage` inspection to clear exactly its own key(s) while leaving the athlete's real saved plan/schedule data untouched. `npx tsc --noEmit` and `npx expo lint` pass clean.

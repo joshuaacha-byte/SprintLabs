@@ -211,6 +211,9 @@ export async function POST(request: Request) {
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
+    // TEMP DIAGNOSTIC: distinguishes a missing server-side env var (misconfigured deployment)
+    // from a genuine Gemini-side failure below.
+    console.error('[coach api] GEMINI_API_KEY is not set in this server environment.');
     return errorResponse('Coach is not configured.', 500);
   }
 
@@ -241,22 +244,35 @@ export async function POST(request: Request) {
       response_format: { type: 'text', mime_type: 'application/json', schema: COACH_RESPONSE_JSON_SCHEMA },
       ...(storeName ? { tools: [{ type: 'file_search', file_search_store_names: [storeName] }] } : {}),
     });
-    if (!interaction.output_text) return errorResponse('Unable to generate coach response.', 502);
+    if (!interaction.output_text) {
+      console.error('[coach api] Gemini returned an empty output_text.');
+      return errorResponse('Unable to generate coach response.', 502);
+    }
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(interaction.output_text);
-    } catch {
+    } catch (err) {
+      console.error('[coach api] Gemini output_text was not valid JSON:', err);
       return errorResponse('Coach returned a response SprintLab could not parse.', 502);
     }
     const payload = sanitizeCoachPayload(parsed);
-    if (!payload) return errorResponse('Coach returned an unexpected response shape.', 502);
+    if (!payload) {
+      console.error('[coach api] Gemini JSON did not match the expected coach response shape:', parsed);
+      return errorResponse('Coach returned an unexpected response shape.', 502);
+    }
 
     return Response.json(payload);
   } catch (err) {
     const status = (err as { status?: number; statusCode?: number } | null)?.status
       ?? (err as { statusCode?: number } | null)?.statusCode;
-    if (status === 429) return errorResponse('Gemini rate-limited this request. Try again later.', 429);
+    if (status === 429) {
+      console.warn('[coach api] Gemini rate-limited this request.');
+      return errorResponse('Gemini rate-limited this request. Try again later.', 429);
+    }
+    // TEMP DIAGNOSTIC: any other exception from createGeminiClient/findKnowledgeStoreName/
+    // ai.interactions.create — a genuine Gemini API error, not a network/routing issue.
+    console.error('[coach api] Unhandled error calling Gemini:', err);
     return errorResponse('Unable to generate coach response.', 502);
   }
 }

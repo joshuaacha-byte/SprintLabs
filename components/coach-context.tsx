@@ -16,6 +16,13 @@ import { toLocalDateKey } from '@/utils/progress';
 // dismissProposal. The Gemini API key and all Gemini-calling code stay server-side in
 // app/api/coach+api.ts; this file only ever talks to that one SprintLab endpoint.
 
+// A bare relative '/api/coach' only resolves inside the Metro dev server (which serves API
+// routes over the same connection as the JS bundle). A standalone EAS build has no such origin,
+// so it must call the deployed API server's absolute URL instead — set at build time via
+// EXPO_PUBLIC_API_BASE_URL (see eas.json). Falls back to relative for local dev, where it already
+// works and the env var is normally unset.
+const COACH_API_URL = `${process.env.EXPO_PUBLIC_API_BASE_URL ?? ''}/api/coach`;
+
 /** The current-screen context the Coach layer knows about when the athlete opens it. This is
  * intentionally shallow — a surface name plus an optional entity a detail screen supplied — not
  * the full athlete AI context, which buildCurrentAthleteAIContext() supplies per request. */
@@ -152,30 +159,56 @@ export function CoachProvider({ children }: PropsWithChildren) {
 
       const context = openContextRef.current;
       const trigger = activeTriggerRef.current;
-      const response = await fetch('/api/coach', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: promptOverride ?? trimmed,
-          context: athleteContext,
-          today: toLocalDateKey(new Date()),
-          surface: context?.surface,
-          entityId: context?.entityId,
-          entityLabel: context?.entityLabel,
-          history: boundedHistory(historyBeforeThisTurn),
-          // Only the single currently-active local trigger, kept small — never every detected
-          // trigger — so Gemini understands why Split surfaced without a scoring dump.
-          activeTrigger: trigger ? { type: trigger.type, date: trigger.date, message: trigger.message } : undefined,
-        }),
-      });
+      if (__DEV__) console.log('[Coach] requesting', COACH_API_URL);
+      let response: Response;
+      try {
+        response = await fetch(COACH_API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: promptOverride ?? trimmed,
+            context: athleteContext,
+            today: toLocalDateKey(new Date()),
+            surface: context?.surface,
+            entityId: context?.entityId,
+            entityLabel: context?.entityLabel,
+            history: boundedHistory(historyBeforeThisTurn),
+            // Only the single currently-active local trigger, kept small — never every detected
+            // trigger — so Gemini understands why Split surfaced without a scoring dump.
+            activeTrigger: trigger ? { type: trigger.type, date: trigger.date, message: trigger.message } : undefined,
+          }),
+        });
+      } catch (err) {
+        // The request never reached any server — DNS/TLS failure, no network, or (before
+        // EXPO_PUBLIC_API_BASE_URL was wired up) an unresolvable relative URL in a standalone build.
+        if (__DEV__) console.warn('[Coach] request failed before reaching server:', err);
+        setMessages(current => [...current, { id: `error-${Date.now()}`, kind: 'error', text: COACH_ERROR_COPY.network }]);
+        return;
+      }
 
       if (response.status === 429) {
+        if (__DEV__) console.warn('[Coach] rate-limited (429)');
         setMessages(current => [...current, { id: `error-${Date.now()}`, kind: 'error', text: COACH_ERROR_COPY.rateLimited }]);
         return;
       }
 
-      const body = await response.json().catch(() => null);
-      if (!response.ok || !body || typeof body.message !== 'string') {
+      if (!response.ok) {
+        // The server was reached but returned an error — a validation failure, missing/invalid
+        // GEMINI_API_KEY on the deployed server, or a Gemini-side error surfaced via errorResponse().
+        const errBody = await response.json().catch(() => null);
+        if (__DEV__) console.warn(`[Coach] non-2xx response (${response.status}):`, errBody?.error ?? '(unparseable body)');
+        setMessages(current => [...current, { id: `error-${Date.now()}`, kind: 'error', text: COACH_ERROR_COPY.generic }]);
+        return;
+      }
+
+      const body = await response.json().catch((err) => {
+        if (__DEV__) console.warn('[Coach] 2xx response body was not valid JSON:', err);
+        return null;
+      });
+      if (!body || typeof body.message !== 'string') {
+        // The backend responded 2xx but the payload shape was wrong — a malformed/unexpected
+        // Gemini response that slipped past sanitizeCoachPayload(), or a proxy/CDN rewriting the body.
+        if (__DEV__) console.warn('[Coach] response body missing expected `message` field:', body);
         setMessages(current => [...current, { id: `error-${Date.now()}`, kind: 'error', text: COACH_ERROR_COPY.generic }]);
         return;
       }
