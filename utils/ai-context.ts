@@ -25,14 +25,36 @@ export type AthleteAIContext = {
   athlete: {
     name?: string;
     sport: string;
+    /** Free-text sport name when the athlete's sport is 'other' — otherwise omitted. */
+    otherSportName?: string;
+    /** e.g. "Wide receiver" — only meaningful for a non-track sport. */
+    sportPosition?: string;
     primaryEvent?: string;
     secondaryEvents?: string[];
+    /** The event the athlete says matters most right now, when it differs from primaryEvent. */
+    priorityEvent?: string;
     trainingLevel: string;
     trainingDaysPerWeek: number;
     prs: { event: string; timeSeconds: number; date?: string }[];
+    /** Athlete-entered goal times — separate from prs (what they've done) and goals (qualitative
+     * focus areas) so Coach can reference what they're chasing, not just where they are. */
+    targetTimes: { event: string; timeSeconds: number; targetDate?: string }[];
     goals: string[];
     /** Recorded verbatim from the athlete/coach; factual constraints, not SprintLab's judgment. */
-    restrictions?: { coach?: string; medical?: string; cautionAreas?: string[]; currentPain?: boolean };
+    restrictions?: {
+      coach?: string;
+      medical?: string;
+      cautionAreas?: string[];
+      currentPain?: boolean;
+      /** Structured concern follow-ups (area + currently-limiting/recently-cleared/monitoring),
+       * distinct from cautionAreas — this carries status, not just area. */
+      concernAreas?: { area: string; status: string; detail?: string }[];
+      returningAfterTimeOff?: boolean;
+      timeAwayDuration?: string;
+    };
+    /** Only present for a football athlete who entered baseline/target numbers — informational,
+     * never a plan-selection input. */
+    footballTests?: { fortyYardDashTime?: number; targetFortyYardDashTime?: number; proAgilityTime?: number };
   };
   season: {
     phase: string;
@@ -51,6 +73,10 @@ export type AthleteAIContext = {
     completed: boolean;
     rpe: number;
     notes?: string;
+    /** A specific area the athlete flagged after this session, when present — separate from
+     * general soreness, sourced from the same Log a Session report Progress's "Recurring
+     * discomfort" surfaces from. */
+    painArea?: string;
   }[];
   recovery: {
     latestReadiness?: { date: string; level?: string; reasons?: string[] };
@@ -89,12 +115,38 @@ export function buildAthleteAIContext(input: AthleteAIContextInput): AthleteAICo
     todayWorkoutId: todayScheduledDay?.kind === 'workout' ? todayScheduledDay.workout?.id : undefined,
   });
 
-  const restrictions = (profile.coachRestrictions || profile.medicalRestrictions || profile.cautionAreas?.length || profile.currentPain)
+  const concernAreas = profile.trainingConcernDetails?.length
+    ? profile.trainingConcernDetails.map(detail => ({
+        area: detail.area,
+        status: detail.status,
+        detail: detail.area === 'other' ? profile.otherConcernArea?.trim() || undefined : undefined,
+      }))
+    : undefined;
+
+  const restrictions = (
+    profile.coachRestrictions
+    || profile.medicalRestrictions
+    || profile.cautionAreas?.length
+    || profile.currentPain
+    || concernAreas
+    || profile.returningAfterTimeOff
+  )
     ? {
         coach: profile.coachRestrictions?.trim() || undefined,
         medical: profile.medicalRestrictions?.trim() || undefined,
         cautionAreas: profile.cautionAreas?.length ? profile.cautionAreas : undefined,
         currentPain: profile.currentPain || undefined,
+        concernAreas,
+        returningAfterTimeOff: profile.returningAfterTimeOff || undefined,
+        timeAwayDuration: profile.returningAfterTimeOff ? profile.timeAwayDuration : undefined,
+      }
+    : undefined;
+
+  const footballTests = (profile.primarySport ?? profile.sport) === 'football' && profile.footballProfile
+    ? {
+        fortyYardDashTime: profile.footballProfile.fortyYardDashTime,
+        targetFortyYardDashTime: profile.footballProfile.targetFortyYardDashTime,
+        proAgilityTime: profile.footballProfile.proAgilityTime,
       }
     : undefined;
 
@@ -102,13 +154,18 @@ export function buildAthleteAIContext(input: AthleteAIContextInput): AthleteAICo
     athlete: {
       name: profile.name?.trim() || undefined,
       sport: profile.primarySport ?? profile.sport ?? 'track-and-field',
+      otherSportName: (profile.primarySport ?? profile.sport) === 'other' ? profile.otherSportParticipation?.trim() || undefined : undefined,
+      sportPosition: profile.sportPosition?.trim() || undefined,
       primaryEvent: profile.primaryEvent,
       secondaryEvents: profile.secondaryEvents?.length ? profile.secondaryEvents : undefined,
+      priorityEvent: profile.targetEvent && profile.targetEvent !== profile.primaryEvent ? profile.targetEvent : undefined,
       trainingLevel: profile.experienceLevel,
       trainingDaysPerWeek: profile.trainingDaysPerWeek,
       prs: profile.personalBests.map(pr => ({ event: pr.event, timeSeconds: pr.timeSeconds, date: pr.date })),
-      goals: [...new Set([...(profile.speedGoals ?? []), profile.primaryGoal].filter(Boolean) as string[])],
+      targetTimes: (profile.targetPerformances ?? []).map(target => ({ event: target.event, timeSeconds: target.timeSeconds, targetDate: target.targetDate ?? undefined })),
+      goals: [...new Set([...(profile.speedGoals ?? []), ...(profile.raceDevelopmentAreas ?? []), profile.primaryGoal].filter(Boolean) as string[])],
       restrictions,
+      footballTests,
     },
     season: {
       phase: season.phase,
@@ -126,15 +183,17 @@ export function buildAthleteAIContext(input: AthleteAIContextInput): AthleteAICo
       completed: weekly.completed,
       due: weekly.due,
     },
-    recentTraining: recent.map(session => ({
-      date: session.date,
-      title: session.title,
-      completed: session.completed,
-      rpe: session.rpe,
-      notes: input.logs.find(log => log.id === session.id)?.notes
-        ? truncate(input.logs.find(log => log.id === session.id)!.notes, NOTE_MAX_CHARS)
-        : undefined,
-    })),
+    recentTraining: recent.map(session => {
+      const log = input.logs.find(item => item.id === session.id);
+      return {
+        date: session.date,
+        title: session.title,
+        completed: session.completed,
+        rpe: session.rpe,
+        notes: log?.notes ? truncate(log.notes, NOTE_MAX_CHARS) : undefined,
+        painArea: log?.painArea ?? undefined,
+      };
+    }),
     recovery: {
       latestReadiness: input.readiness && input.readiness.status === 'completed'
         ? { date: input.readiness.date, level: input.readiness.readinessLevel, reasons: input.readiness.readinessReasons }

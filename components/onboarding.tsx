@@ -1,7 +1,7 @@
 import { PropsWithChildren, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Picker } from '@react-native-picker/picker';
-import { Animated, Image, ImageSourcePropType, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useColorScheme, View } from 'react-native';
+import { Animated, Image, ImageSourcePropType, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, type TextInputProps, useColorScheme, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Palette, useTheme } from '@/constants/sprintlab';
 import { completeStep, hapticSelection, selection, tap } from '@/utils/haptics';
@@ -95,7 +95,7 @@ export function SecondaryOnboardingButton({ title, onPress }: { title: string; o
 
 export function UnitToggle({ value, onChange }: { value: 'meters' | 'yards'; onChange: (value: 'meters' | 'yards') => void }) { const palette = useTheme(); const styles = useMemo(() => createStyles(palette), [palette]); return <View style={styles.unitToggle}>{(['meters', 'yards'] as const).map(unit => <Pressable key={unit} accessibilityRole="button" accessibilityState={{ selected: value === unit }} onPress={() => { if (value !== unit) selection(); onChange(unit); }} style={[styles.unit, value === unit && styles.unitActive]}><Text style={[styles.unitText, value === unit && styles.unitTextActive]}>{unit === 'meters' ? 'Meters' : 'Yards'}</Text></Pressable>)}</View>; }
 
-export function PerformanceInput({ value, onChangeText, placeholder, keyboardType = 'decimal-pad', maxLength }: { value: string; onChangeText: (text: string) => void; placeholder: string; keyboardType?: 'default' | 'decimal-pad' | 'numeric'; maxLength?: number }) {
+export function PerformanceInput({ value, onChangeText, placeholder, keyboardType = 'decimal-pad', maxLength, textContentType, autoComplete }: { value: string; onChangeText: (text: string) => void; placeholder: string; keyboardType?: 'default' | 'decimal-pad' | 'numeric'; maxLength?: number; textContentType?: TextInputProps['textContentType']; autoComplete?: TextInputProps['autoComplete'] }) {
   const palette = useTheme();
   const styles = useMemo(() => createStyles(palette), [palette]);
   const [displayValue, setDisplayValue] = useState(value);
@@ -123,6 +123,8 @@ export function PerformanceInput({ value, onChangeText, placeholder, keyboardTyp
     inputMode={keyboardType === 'default' ? 'text' : keyboardType === 'decimal-pad' ? 'decimal' : 'numeric'}
     maxLength={maxLength}
     autoCorrect={keyboardType === 'default'}
+    textContentType={textContentType}
+    autoComplete={autoComplete}
     style={styles.input}
     accessibilityLabel={placeholder}
   />;

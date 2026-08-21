@@ -17,7 +17,8 @@ import { getThemePreference, saveThemePreference, type ThemePreference } from '@
 import { requestSprintLabIntroLaunch, resetSprintLabIntroSeen } from '@/utils/sprintlab-intro';
 import { getNotificationPermissionStatus, resetNotificationOptInDecision } from '@/utils/notification-permission';
 import { resetCoachIntroSeen } from '@/utils/coach-discovery';
-import { clearDismissedCoachTriggerIds } from '@/utils/storage';
+import { clearDismissedCoachTriggerIds, hasGeneratedDevTestData } from '@/utils/storage';
+import { useCoach } from '@/components/coach-context';
 import { completeStep, error, selection, success, tap, warning } from '@/utils/haptics';
 
 const pretty = (value: string) => value.replaceAll('-', ' ').replace(/\b\w/g, letter => letter.toUpperCase());
@@ -35,10 +36,13 @@ export default function SettingsScreen() {
   const [meetDate, setMeetDate] = useState<string | null>(null);
   const [meetPriority, setMeetPriority] = useState<MeetPriority>('B');
   const [themePreference, setThemePreference] = useState<ThemePreference>('dark');
+  const [devTestDataActive, setDevTestDataActive] = useState(false);
+  const { resetConversation } = useCoach();
 
   useFocusEffect(useCallback(() => {
     void getAthleteProfile().then(setProfile);
     void getThemePreference().then(setThemePreference);
+    if (__DEV__) void hasGeneratedDevTestData().then(setDevTestDataActive);
   }, []));
 
   const chooseTheme = async (preference: ThemePreference) => {
@@ -114,7 +118,7 @@ export default function SettingsScreen() {
   const resetApp = () => {
     Alert.alert(
       'Erase all local SprintLab data?',
-      'This testing action permanently removes this device’s profile, plan, workouts, readiness, History, Progress, and local library changes. It cannot be undone.',
+      'This permanently removes every SprintLab record stored on this device — profile and onboarding answers, plan and schedule, workout sessions and readiness history, PRs and progress, Coach state, settings and notification setup, and any development test data. It cannot be undone, and it does not change the iPhone notification permission itself.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -123,6 +127,7 @@ export default function SettingsScreen() {
           onPress: async () => {
             warning();
             await resetAllSprintLabLocalData();
+            resetConversation();
             router.replace('/profile');
           },
         },
@@ -433,6 +438,19 @@ export default function SettingsScreen() {
             </Pressable>
           </View>
 
+          {__DEV__ ? <>
+            <Text style={styles.devSectionLabel}>DEVELOPMENT DATA</Text>
+            {devTestDataActive ? <View style={styles.activeBanner}><MaterialIcons name="science" size={14} color={palette.orange} /><Text style={styles.activeBannerText}>TEST DATA ACTIVE</Text></View> : null}
+            <Text style={styles.cardCopy}>Generates real completed sessions through SprintLab&apos;s own streak/PR/milestone engine, for inspecting progression without weeks of real training. Hidden outside development builds.</Text>
+            <View style={styles.devRowGroup}>
+              <Pressable accessibilityRole="button" onPress={() => { tap(); router.push('/dev-data'); }} style={styles.devRow}>
+                <View style={styles.devRowIcon}><MaterialIcons name="science" size={17} color={palette.accent} /></View>
+                <Text style={styles.devRowText}>Development Data Controls</Text>
+                <MaterialIcons name="chevron-right" size={19} color={palette.muted} />
+              </Pressable>
+            </View>
+          </> : null}
+
           <View style={styles.devDivider} />
           <Pressable onPress={resetApp} style={styles.dangerButton}>
             <MaterialIcons name="delete-forever" size={20} color={palette.red} />
@@ -520,6 +538,8 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   textActionLabel: { color: palette.accent, fontSize: 12, fontWeight: '900' },
   devCard: { gap: 12, borderColor: palette.border },
   devSectionLabel: { color: palette.muted, fontSize: 10, fontWeight: '900', letterSpacing: 1, marginTop: 2 },
+  activeBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 28, borderRadius: 8, backgroundColor: '#2A1B0C', paddingHorizontal: 9, alignSelf: 'flex-start' },
+  activeBannerText: { color: palette.orange, fontSize: 9, fontWeight: '900', letterSpacing: 0.5 },
   devRowGroup: { gap: 8 },
   devRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 12, backgroundColor: palette.surface2, paddingHorizontal: 12 },
   devRowIcon: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },

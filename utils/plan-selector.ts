@@ -142,32 +142,16 @@ function availableSurfaces(profile: AthleteProfile) {
   return surfaces;
 }
 
-function equipmentTokenAvailable(token: string, profile: AthleteProfile) {
-  const value = token.toLowerCase();
-  const home = new Set<EquipmentType>(profile.homeEquipment);
-  if (!value || value === 'none' || value.includes('optional') || value.includes('preferred')) return true;
-  if (value.includes('wall') || value.includes('fence')) return true;
-  if (value.includes('cone')) return profile.conesAccess === 'regular' || home.has('cones');
-  if (value.includes('starting block')) return profile.startingBlocksAccess === 'regular' || home.has('starting-blocks');
-  if (value.includes('sled')) return profile.sledAccess === 'regular' || home.has('sled');
-  if (value.includes('timing')) return profile.timingGatesAccess === 'regular' || home.has('timing-gates') || home.has('stopwatch');
-  if (value.includes('mini-hurdle') || value.includes('wicket')) return home.has('mini-hurdles');
-  if (value.includes('band')) return home.has('resistance-band') || profile.weightRoomAccess === 'regular';
-  if (value.includes('dumbbell')) return home.has('dumbbells') || profile.weightRoomAccess === 'regular';
-  if (value.includes('kettlebell')) return home.has('kettlebell') || profile.weightRoomAccess === 'regular';
-  if (value.includes('weight room') || value.includes('rack') || value.includes('barbell') || value.includes('bench') || value.includes('box') || value.includes('trap bar') || value.includes('plate')) {
-    return profile.weightRoomAccess === 'regular';
-  }
-  if (value.includes('bike') || value.includes('pool')) return profile.indoorAccess === 'regular';
-  if (value.includes('specialized') || value.includes('towing') || value.includes('force plate')) return false;
-  return true;
-}
-
 function logisticsMatch(workout: LibraryWorkout, _context: CandidateContext) {
-  // Location and ordinary equipment were intentionally removed from onboarding.
-  // Missing answers must therefore mean "use the standard authored session and
-  // show its substitutions", not "the athlete has no track, blocks, or weights".
-  // Only genuinely specialized technology remains a recommendation gate.
+  // Location and ordinary equipment were intentionally removed from onboarding, and
+  // trackAccess/grassAccess/hillAccess/indoorAccess/startingBlocksAccess/weightRoomAccess/
+  // homeEquipment/courtAccess/sledAccess/timingGatesAccess/conesAccess/turfAccess on
+  // AthleteProfile are consequently never collected by any onboarding or Settings UI — every
+  // athlete carries the same hardcoded defaults (see blankProfile() in app/profile.tsx). Do not
+  // reintroduce per-athlete equipment gating or "your equipment" copy from those fields; doing so
+  // would present a hardcoded default as if it were a real answer. Missing answers mean "use the
+  // standard authored session and show its plain equipment list" — never "the athlete has no
+  // track, blocks, or weights". Only genuinely specialized technology remains a recommendation gate.
   return workout.equipmentRequired.every(requirement => {
     const value = requirement.toLowerCase();
     return !value.includes('force plate')
@@ -487,14 +471,26 @@ function suggestionDetails(
   };
 }
 
-function restDay(dayIndex: WeekdayIndex): ScheduledDay {
+/**
+ * A day the deterministic selector didn't schedule a session for. Two genuinely different cases,
+ * distinguished so Today/Plan never call a plan-driven rest day "not scheduled" — only a day with
+ * a real external commitment (team practice, another sport, a game/meet) keeps the "something
+ * else already happens here" framing; a day that's simply not one of the athlete's chosen training
+ * days per week (or their preferred rest day) is an intentional Rest Day, not an unresolved gap.
+ * `blockedReasons` — from `blockedWeekdayReasons(profile)` — carries that distinction in; 'Preferred
+ * rest day' alone doesn't count as an external commitment.
+ */
+function restDay(dayIndex: WeekdayIndex, blockedReasons: string[] = []): ScheduledDay {
+  const hasExternalCommitment = blockedReasons.some(reason => reason !== 'Preferred rest day');
   return {
     dayIndex,
     shortLabel: weekdayLabels[dayIndex].short,
     fullLabel: weekdayLabels[dayIndex].full,
     kind: 'rest',
-    restTitle: 'Open / existing training',
-    restNote: 'No SprintLab speed session is scheduled. Team practice, coach work, and recovery still count as training demands.',
+    restTitle: hasExternalCommitment ? 'Open / existing training' : 'Rest day',
+    restNote: hasExternalCommitment
+      ? 'No SprintLab speed session is scheduled. Team practice, coach work, and recovery still count as training demands.'
+      : 'No training is scheduled today. Recovery is part of the plan — not a missed session.',
   };
 }
 
@@ -864,11 +860,12 @@ function buildGeneralSpeedWeek(
     };
   }
   const suggestionByDay = new Map(suggestions.map(item => [item.dayIndex, item]));
+  const blockedReasons = blockedWeekdayReasons(profile);
   const schedule = ([1, 2, 3, 4, 5, 6, 0] as WeekdayIndex[]).map(dayIndex => {
     const suggestion = suggestionByDay.get(dayIndex);
     return suggestion
       ? { dayIndex, shortLabel: weekdayLabels[dayIndex].short, fullLabel: weekdayLabels[dayIndex].full, kind: 'workout' as const, workout: suggestion.plannedWorkout }
-      : restDay(dayIndex);
+      : restDay(dayIndex, blockedReasons.get(dayIndex));
   });
   const high = suggestions.filter(item => item.loadClass === 'high').length;
   const low = suggestions.filter(item => item.loadClass === 'low').length;
@@ -993,6 +990,7 @@ export function buildDeterministicWeeklyPlan(
   }
 
   const suggestionByDay = new Map(suggestions.map(item => [item.dayIndex, item]));
+  const blockedReasons = blockedWeekdayReasons(profile);
   const schedule: ScheduledDay[] = ([1, 2, 3, 4, 5, 6, 0] as WeekdayIndex[]).map(dayIndex => {
     const suggestion = suggestionByDay.get(dayIndex);
     return suggestion
@@ -1003,7 +1001,7 @@ export function buildDeterministicWeeklyPlan(
           kind: 'workout',
           workout: suggestion.plannedWorkout,
         }
-      : restDay(dayIndex);
+      : restDay(dayIndex, blockedReasons.get(dayIndex));
   });
 
   return {

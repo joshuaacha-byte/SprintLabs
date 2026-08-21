@@ -24,7 +24,6 @@ export type DirectionPattern = 'linear' | 'curved' | 'lateral' | 'multidirection
 export type PerformanceStartType = 'blocks' | 'three-point' | 'two-point' | 'standing' | 'sport-stance' | 'flying-start' | 'reactive-start' | 'unknown';
 export type CurrentTeamTrainingLoad = 'low' | 'moderate' | 'high' | 'unknown';
 export type TrainingPlanMode = 'build-my-plan' | 'log-coach-plan' | 'both';
-export type SprintConsistency = 'not-currently-training' | 'occasional' | '1-2-times-weekly' | '3-plus-times-weekly';
 export type TrainingDemand = 'team-practices' | 'games-or-meets' | 'weight-training' | 'another-sport' | 'heavy-school-schedule' | 'none';
 export type MeetPriority = 'A' | 'B' | 'C';
 export type CompetitionStatus = 'out-of-season' | 'preseason' | 'in-season' | 'postseason' | 'unknown';
@@ -325,6 +324,9 @@ export type AthleteProfile = {
   preferredRestDay: TrainingDay;
   /** Keeps the legacy rest-day value readable without treating it as a new athlete's choice. */
   preferredRestDayAnswered?: boolean;
+  /** Not currently collected by any onboarding or Settings question — always the blankProfile()
+   * default. Kept for storage-shape stability and possible future equipment/facility onboarding;
+   * do not read these as a real per-athlete answer or use them to generate athlete-specific copy. */
   usualSessionDurationMinutes: number;
   trackAccess: AccessLevel;
   grassAccess: AccessLevel;
@@ -337,6 +339,10 @@ export type AthleteProfile = {
   liftingExperience: SkillExperience;
   blockStartExperience: SkillExperience;
   primaryGoal: PrimaryGoal;
+  /** Migration-fallback only. `seasonCalendar` is the canonical source for meet/championship
+   * dates — new onboarding and Settings writes go there. These two are read only by
+   * migrateAthleteProfile() and seasonCalendarFromProfile() when `seasonCalendar` is absent, to
+   * convert an old saved profile safely. Do not write to these from new UI. */
   nextMeetDate: ISODateString | null;
   championshipDate: ISODateString | null;
   loggingOnlyMode: boolean;
@@ -360,7 +366,8 @@ export type AthleteProfile = {
   busySchoolDays?: TrainingDay[];
   /** True after the athlete has placed selected outside commitments on the week. */
   commitmentSchedulePlaced?: boolean;
-  currentTeamTrainingLoad?: CurrentTeamTrainingLoad;
+  /** Not currently collected by any onboarding or Settings question — see the comment on
+   * trackAccess above. */
   courtAccess?: AccessLevel;
   sledAccess?: AccessLevel;
   timingGatesAccess?: AccessLevel;
@@ -376,13 +383,10 @@ export type AthleteProfile = {
   /** True only after the athlete explicitly chooses how SprintLab should organize training. */
   trainingPlanModeAnswered?: boolean;
   otherSportParticipation?: string;
-  recentSprintConsistency?: SprintConsistency;
-  currentWorkouts?: string;
   currentPain?: boolean;
   cautionAreas?: PainArea[];
   coachRestrictions?: string;
   medicalRestrictions?: string;
-  safetyAcknowledgedAt?: ISODateTimeString | null;
   targetEvent?: SprintEvent;
   followsCoachCreatedPlan?: boolean;
   /** Set only after the final commitment screen. Older local profiles remain valid. */
@@ -408,6 +412,7 @@ export type AthleteProfile = {
    * done" gate, unchanged from before. */
   trackEventsAnswered?: boolean;
   trackMainEventAnswered?: boolean;
+  /** Not currently collected — see the comment on trackAccess above. */
   turfAccess?: AccessLevel;
   /** Local workout reminders. Time is stored in the athlete's current local timezone. */
   workoutReminderEnabled?: boolean;
@@ -583,11 +588,50 @@ export type ReadinessCheck = {
   stress: OneToFive | null;
   fuelHydrated: boolean | null;
   generalSoreness: ZeroToTen | null;
+  /** Legacy fixed-body-part fields — kept only so old records built before the app generalized to
+   * `painAreas` still read back correctly. Never populated from a hardcoded assumption anymore:
+   * derived (see utils/domain-adapters.ts) from a matching `painAreas` entry, i.e. only set when
+   * the athlete actually reported that specific area that day. Do not add UI that writes these
+   * directly — use `painAreas` for any new per-area reporting. */
   hamstringSoreness: ZeroToTen | null;
   achillesSoreness: ZeroToTen | null;
   painAreas: PainReport[];
   warmupFeeling: WarmupFeeling;
   notes: string;
+};
+
+/** A single user-recorded activity or exercise within a manually logged session — deliberately
+ * free-text-friendly (not the rigid numeric ExerciseResult shape) so it can represent a sprint
+ * rep, a lift, a jump, or anything else without forcing irrelevant fields. */
+export type LoggedActivity = {
+  id: string;
+  name: string;
+  setsOrReps?: string;
+  distance?: string;
+  result?: string;
+  notes?: string;
+};
+
+export type LoggedSessionCategory =
+  | 'acceleration'
+  | 'maximum-velocity'
+  | 'speed-endurance'
+  | 'tempo-recovery'
+  | 'starts-technique'
+  | 'strength'
+  | 'plyometrics'
+  | 'competition'
+  | 'mixed'
+  | 'other';
+
+/** The structured record of what a manually logged (outside/unplanned) session actually was —
+ * distinct from `exerciseResults`, which stays reserved for workouts executed through SprintLab's
+ * own in-app tracker. Absent on records saved before this existed and on in-app completions. */
+export type ManualWorkoutDetails = {
+  category: LoggedSessionCategory;
+  description: string;
+  durationMinutes?: number;
+  activities: LoggedActivity[];
 };
 
 export type TrainingLog = {
@@ -611,6 +655,11 @@ export type TrainingLog = {
   generalNotes: string;
   createdAt: ISODateTimeString;
   updatedAt: ISODateTimeString;
+  /** Present only for a manually logged session (see LoggedSessionsection above). Absent for
+   * in-app planned-workout completions (which already have full `exerciseResults`/`plannedWorkout`
+   * detail) and for records saved before this field existed — those should render "Workout
+   * details not recorded", never crash. */
+  manualDetails?: ManualWorkoutDetails | null;
 };
 
 export type WeeklyPlan = {

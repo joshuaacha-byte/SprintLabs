@@ -47,7 +47,6 @@ export const sampleAthleteProfile = {
   trainingContext: 'preseason',
   sportPracticeDays: [],
   gameOrCompetitionDays: [],
-  currentTeamTrainingLoad: 'unknown',
   courtAccess: 'none',
   sledAccess: 'occasional',
   timingGatesAccess: 'occasional',
@@ -58,11 +57,11 @@ export const sampleAthleteProfile = {
 } satisfies AthleteProfile;
 
 export const sampleFootballAthleteProfile = {
-  ...sampleAthleteProfile, id: 'athlete-football-sample', name: 'Jordan', primaryEvent: '100m', secondaryEvents: [], personalBests: [], sport: 'football', sportPosition: 'Wide receiver', speedGoals: ['acceleration', 'maximum-velocity', 'combine-testing'], competitionLevel: 'high-school', trainingContext: 'offseason', sportPracticeDays: ['monday', 'wednesday'], gameOrCompetitionDays: [], currentTeamTrainingLoad: 'moderate', footballProfile: { position: 'Wide receiver', fortyYardDashTime: 4.72, tenYardSplit: 1.64, combineDate: '2026-09-12' }, trackProfile: undefined,
+  ...sampleAthleteProfile, id: 'athlete-football-sample', name: 'Jordan', primaryEvent: '100m', secondaryEvents: [], personalBests: [], sport: 'football', sportPosition: 'Wide receiver', speedGoals: ['acceleration', 'maximum-velocity', 'combine-testing'], competitionLevel: 'high-school', trainingContext: 'offseason', sportPracticeDays: ['monday', 'wednesday'], gameOrCompetitionDays: [], footballProfile: { position: 'Wide receiver', fortyYardDashTime: 4.72, tenYardSplit: 1.64, combineDate: '2026-09-12' }, trackProfile: undefined,
 } satisfies AthleteProfile;
 
 export const sampleSoccerAthleteProfile = {
-  ...sampleAthleteProfile, id: 'athlete-soccer-sample', name: 'Maya', personalBests: [], sport: 'soccer', sportPosition: 'Midfielder', speedGoals: ['acceleration', 'multidirectional-speed', 'repeated-sprint-ability'], competitionLevel: 'club', trainingContext: 'in-season', sportPracticeDays: ['tuesday', 'thursday'], gameOrCompetitionDays: ['saturday'], currentTeamTrainingLoad: 'high', soccerProfile: { position: 'Midfielder', tenMeterTime: 1.89, twentyMeterTime: 3.21, matchDaysPerWeek: 1 }, trackProfile: undefined,
+  ...sampleAthleteProfile, id: 'athlete-soccer-sample', name: 'Maya', personalBests: [], sport: 'soccer', sportPosition: 'Midfielder', speedGoals: ['acceleration', 'multidirectional-speed', 'repeated-sprint-ability'], competitionLevel: 'club', trainingContext: 'in-season', sportPracticeDays: ['tuesday', 'thursday'], gameOrCompetitionDays: ['saturday'], soccerProfile: { position: 'Midfielder', tenMeterTime: 1.89, twentyMeterTime: 3.21, matchDaysPerWeek: 1 }, trackProfile: undefined,
 } satisfies AthleteProfile;
 
 export const sampleBasketballAthleteProfile = {

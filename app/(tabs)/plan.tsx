@@ -6,9 +6,9 @@ import { Card, Eyebrow, ScreenTitle } from '@/components/sprint-ui';
 import { AppFooter } from '@/components/app-footer';
 import { Palette, useTheme } from '@/constants/sprintlab';
 import { defaultWeekSchedule, OPEN_DAY_RESTTITLE } from '@/data/workouts';
-import { AthleteProfile, CompletedWorkoutSession, ScheduledDay, WeekdayIndex } from '@/types';
+import { ActiveWorkoutSession, AthleteProfile, CompletedWorkoutSession, ScheduledDay, WeekdayIndex } from '@/types';
 import { getAthleteProfile, getTrainingWorkflow } from '@/utils/athlete-profile';
-import { getCompletedWorkoutSessions, getWeekSchedule, markDayAsRest, swapScheduledDays } from '@/utils/storage';
+import { getActiveWorkoutSession, getCompletedWorkoutSessions, getWeekSchedule, markDayAsRest, swapScheduledDays } from '@/utils/storage';
 import { sessionDateKey, toLocalDateKey } from '@/utils/progress';
 import { prepareWorkoutLaunch } from '@/utils/workout-launch';
 import { completeStep, error, tap, warning } from '@/utils/haptics';
@@ -23,12 +23,14 @@ export default function PlanScreen() {
   const [selected, setSelected] = useState<WeekdayIndex>(todayIndex);
   const [choosingMoveTarget, setChoosingMoveTarget] = useState(false);
   const [weekSessions, setWeekSessions] = useState<CompletedWorkoutSession[]>([]);
+  const [activeSession, setActiveSession] = useState<ActiveWorkoutSession | null>(null);
 
   const loadSchedule = useCallback(() => getWeekSchedule().then(setSchedule), []);
   useFocusEffect(useCallback(() => {
     loadSchedule();
     void getAthleteProfile().then(setAthlete);
     void getCompletedWorkoutSessions().then(setWeekSessions);
+    void getActiveWorkoutSession().then(setActiveSession);
   }, [loadSchedule]));
 
   const workflow = athlete ? getTrainingWorkflow(athlete) : null;
@@ -75,15 +77,50 @@ export default function PlanScreen() {
       error();
     }
   };
-  const swapWith = async (target: WeekdayIndex) => {
+  // "Move" is implemented as an exchange of the two days' full content (utils/storage.ts's
+  // swapScheduledDays) — moving a workout onto an open/rest day is just a swap where the other
+  // side happens to be empty. Two things the plain swap must never do silently: touch a day an
+  // active session is currently scheduled against (that session's own snapshot wouldn't reflect
+  // the change, so the schedule and the in-progress session could disagree about what day it is),
+  // or overwrite another day's real workout without the athlete explicitly confirming that's what
+  // they meant, since "Move" reads as relocate-to-an-open-day, not swap-two-workouts.
+  const performSwap = async (target: WeekdayIndex) => {
     try {
       await swapScheduledDays(selected, target);
       completeStep();
       setChoosingMoveTarget(false);
       await loadSchedule();
+      const targetLabel = schedule.find(day => day.dayIndex === target)?.fullLabel ?? 'the selected day';
+      const movedTitle = selectedDay?.kind === 'workout' ? selectedDay.workout?.title ?? 'Workout' : selectedDay?.fullLabel ?? 'Schedule';
+      Alert.alert('Workout moved', `${movedTitle} is now scheduled for ${targetLabel}.`);
     } catch {
       error();
     }
+  };
+  const swapWith = (target: WeekdayIndex) => {
+    if (activeSession && (activeSession.scheduledDayIndex === selected || activeSession.scheduledDayIndex === target)) {
+      error();
+      Alert.alert(
+        'Can’t move this right now',
+        'A workout is currently active for one of these days. Finish or discard it before changing the schedule.',
+        [{ text: 'OK' }, { text: 'Open active workout', onPress: () => router.push('/workout') }],
+      );
+      return;
+    }
+    const targetDay = schedule.find(day => day.dayIndex === target);
+    if (targetDay?.kind === 'workout' && targetDay.workout) {
+      const sourceLabel = selectedDay?.kind === 'workout' ? selectedDay.workout?.title ?? selectedDay.fullLabel : selectedDay?.fullLabel ?? 'This day';
+      Alert.alert(
+        `Swap with ${targetDay.fullLabel}?`,
+        `${targetDay.fullLabel} already has "${targetDay.workout.title}" scheduled. Moving ${sourceLabel} here will swap the two days instead of leaving ${targetDay.fullLabel} untouched.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Swap days', onPress: () => void performSwap(target) },
+        ],
+      );
+      return;
+    }
+    void performSwap(target);
   };
   const startPlanned = async (day: ScheduledDay) => {
     if (!day.workout) return;
@@ -161,24 +198,24 @@ export default function PlanScreen() {
             {day.kind === 'workout' && day.workout ? <>
               <Text style={styles.expandedText}>{day.workout.purpose}</Text>
               <View style={styles.actions}>
-                <Pressable onPress={() => startPlanned(day)} style={styles.startAction}><MaterialIcons name="play-arrow" size={18} color="#0B1000" /><Text style={styles.startActionText}>{isToday ? 'Start today’s session' : 'Start today'}</Text></Pressable>
-                <Pressable onPress={() => editDay(day.dayIndex)} style={styles.primaryAction}><MaterialIcons name="edit" size={17} color={palette.accent} /><Text style={styles.primaryActionText}>Edit session</Text></Pressable>
-                <Pressable onPress={() => findSubstitute(day.dayIndex)} style={styles.primaryAction}><MaterialIcons name="swap-horiz" size={17} color={palette.accent} /><Text style={styles.primaryActionText}>Find substitute</Text></Pressable>
-                <Pressable onPress={() => { tap(); setChoosingMoveTarget(value => !value); }} style={styles.secondaryAction}><Text style={styles.secondaryActionText}>Move</Text></Pressable>
-                <Pressable onPress={() => markRest(day.dayIndex)} style={styles.secondaryAction}><Text style={styles.restActionText}>Make rest day</Text></Pressable>
+                <Pressable onPress={event => { event.stopPropagation(); startPlanned(day); }} style={styles.startAction}><MaterialIcons name="play-arrow" size={18} color="#0B1000" /><Text style={styles.startActionText}>{isToday ? 'Start today’s session' : 'Start today'}</Text></Pressable>
+                <Pressable onPress={event => { event.stopPropagation(); editDay(day.dayIndex); }} style={styles.primaryAction}><MaterialIcons name="edit" size={17} color={palette.accent} /><Text style={styles.primaryActionText}>Edit session</Text></Pressable>
+                <Pressable onPress={event => { event.stopPropagation(); findSubstitute(day.dayIndex); }} style={styles.primaryAction}><MaterialIcons name="swap-horiz" size={17} color={palette.accent} /><Text style={styles.primaryActionText}>Find substitute</Text></Pressable>
+                <Pressable accessibilityRole="button" accessibilityLabel={`Move ${day.workout.title}`} onPress={event => { event.stopPropagation(); tap(); setChoosingMoveTarget(value => !value); }} style={styles.secondaryAction}><Text style={styles.secondaryActionText}>Move</Text></Pressable>
+                <Pressable onPress={event => { event.stopPropagation(); markRest(day.dayIndex); }} style={styles.secondaryAction}><Text style={styles.restActionText}>Make rest day</Text></Pressable>
               </View>
             </> : <>
               <Text style={styles.expandedText}>{day.restNote}</Text>
               <View style={styles.actions}>
-                <Pressable onPress={() => editDay(day.dayIndex)} style={styles.primaryAction}><MaterialIcons name="add" size={18} color={palette.accent} /><Text style={styles.primaryActionText}>Plan a workout</Text></Pressable>
-                <Pressable onPress={() => { tap(); setChoosingMoveTarget(value => !value); }} style={styles.secondaryAction}><Text style={styles.secondaryActionText}>Move</Text></Pressable>
+                <Pressable onPress={event => { event.stopPropagation(); editDay(day.dayIndex); }} style={styles.primaryAction}><MaterialIcons name="add" size={18} color={palette.accent} /><Text style={styles.primaryActionText}>Plan a workout</Text></Pressable>
+                <Pressable accessibilityRole="button" accessibilityLabel={`Move ${day.fullLabel}`} onPress={event => { event.stopPropagation(); tap(); setChoosingMoveTarget(value => !value); }} style={styles.secondaryAction}><Text style={styles.secondaryActionText}>Move</Text></Pressable>
               </View>
             </>}
 
             {choosingMoveTarget && selectedDay ? <View style={styles.movePanel}>
-              <Text style={styles.moveTitle}>Swap {selectedDay.fullLabel} with:</Text>
-              <View style={styles.moveDays}>{schedule.filter(target => target.dayIndex !== selected).map(target => <Pressable key={target.dayIndex} onPress={() => swapWith(target.dayIndex)} style={styles.moveDay}><Text style={styles.moveDayText}>{target.shortLabel}</Text></Pressable>)}</View>
-              <Text style={styles.moveHint}>The two scheduled days will exchange places.</Text>
+              <Text style={styles.moveTitle}>Move {selectedDay.kind === 'workout' ? selectedDay.workout?.title ?? selectedDay.fullLabel : selectedDay.fullLabel} to:</Text>
+              <View style={styles.moveDays}>{schedule.filter(target => target.dayIndex !== selected).map(target => <Pressable key={target.dayIndex} accessibilityRole="button" accessibilityLabel={`Move to ${target.fullLabel}`} onPress={event => { event.stopPropagation(); swapWith(target.dayIndex); }} style={styles.moveDay}><Text style={styles.moveDayText}>{target.shortLabel}</Text></Pressable>)}</View>
+              <Text style={styles.moveHint}>Moving to an open day relocates this workout. Moving to a day that already has one will ask to confirm a swap.</Text>
             </View> : null}
           </View> : null}
         </Card>

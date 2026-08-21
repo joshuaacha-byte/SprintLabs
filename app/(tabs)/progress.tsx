@@ -4,11 +4,12 @@ import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'rea
 import { useFocusEffect } from 'expo-router';
 import { Card, Eyebrow, ScreenTitle } from '@/components/sprint-ui';
 import { useIntroTarget } from '@/components/sprintlab-intro-context';
-import { formatTrackConditions } from '@/constants/logging';
+import { formatTrackConditions, painAreaLabels } from '@/constants/logging';
 import { Palette, useTheme } from '@/constants/sprintlab';
 import type { CompletedWorkoutSession, ScheduledDay, TrainingLogSummary } from '@/types';
 import {
   buildRecoveryTrend,
+  buildRecurringPainAreas,
   buildSprintSeries,
   buildTrainingVolumeSummary,
   buildWeeklyProgress,
@@ -120,6 +121,7 @@ export default function ProgressScreen() {
   );
   const unlockedMilestoneCount = useMemo(() => milestones.filter(milestone => milestone.unlocked).length, [milestones]);
   const recovery = useMemo(() => buildRecoveryTrend(logs), [logs]);
+  const recurringPain = useMemo(() => buildRecurringPainAreas(logs), [logs]);
   const periodVolume = useMemo(
     () => buildTrainingVolumeSummary(periodSessions, now),
     [now, periodSessions],
@@ -273,6 +275,18 @@ export default function ProgressScreen() {
           title="No recovery trend yet"
           copy="Readiness check-ins will build your sleep, effort, and soreness trends."
         />}
+
+        {recurringPain.length ? <>
+          <SectionTitle eyebrow="Recovery" title="Recurring discomfort" />
+          <Card style={styles.recoveryCard}>
+            <Text style={styles.caption}>Reported more than once in the last 30 days from Log a Session — not a diagnosis, just a pattern worth noticing.</Text>
+            {recurringPain.map(item => <View key={item.area} style={styles.painRow}>
+              <MaterialIcons name={item.monitored ? 'visibility' : 'info-outline'} size={18} color={item.monitored ? palette.orange : palette.muted} />
+              <Text style={styles.painArea}>{painAreaLabels[item.area as keyof typeof painAreaLabels] ?? item.area}</Text>
+              <Text style={styles.painCount}>{item.count}× · last {formatProgressDate(item.lastDate)}</Text>
+            </View>)}
+          </Card>
+        </> : null}
       </> : null}
     </ScrollView>
   </SafeAreaView>;
@@ -557,6 +571,9 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   detailNote: { borderRadius: 12, backgroundColor: palette.surface2, padding: 11 },
   detailCopy: { color: palette.muted, fontSize: 10, lineHeight: 16 },
   recoveryCard: { gap: 13 },
+  painRow: { flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 30 },
+  painArea: { flex: 1, color: palette.text, fontSize: 13, fontWeight: '800' },
+  painCount: { color: palette.muted, fontSize: 11, fontWeight: '700' },
   trendsWrap: { borderTopWidth: 1, borderTopColor: palette.border },
   trendRow: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: palette.border, gap: 8 },
   trendHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },

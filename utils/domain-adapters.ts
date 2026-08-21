@@ -6,10 +6,14 @@ import type {
   ExerciseCategory,
   ExerciseResult,
   FootwearType,
+  LoggedActivity,
+  LoggedSessionCategory,
+  ManualWorkoutDetails,
   ModificationReason,
   OneToFive,
   OneToTen,
   PainArea,
+  PainReport,
   PlannedExercise,
   PlannedWorkout,
   PostWorkoutReview,
@@ -31,6 +35,41 @@ import type {
   WorkoutSectionCategory,
   ZeroToTen,
 } from '@/types';
+
+/** The 10 session types offered on Log Session's manual "Workout details" form, mapped onto the
+ * existing (library-wide) WorkoutCategory enum so filtering/labels elsewhere keep working
+ * unchanged. Lossy only where WorkoutCategory has no matching concept (starts/technique work is
+ * filed under acceleration; "Other" under mixed) — the athlete's exact chosen category is still
+ * preserved verbatim on `TrainingLog.manualDetails.category` for accurate re-display.
+ */
+export const sessionCategoryToWorkoutCategory: Record<LoggedSessionCategory, WorkoutCategory> = {
+  acceleration: 'acceleration',
+  'maximum-velocity': 'maximum-velocity',
+  'speed-endurance': 'speed-endurance',
+  'tempo-recovery': 'tempo',
+  'starts-technique': 'acceleration',
+  strength: 'strength',
+  plyometrics: 'plyometrics',
+  competition: 'competition',
+  mixed: 'mixed',
+  other: 'mixed',
+};
+
+/** The inverse, for prefilling the manual "session type" chip from a scheduled workout's own
+ * category when the athlete links a manual entry to it. */
+export const workoutCategoryToSessionCategory: Record<WorkoutCategory, LoggedSessionCategory> = {
+  acceleration: 'acceleration',
+  'maximum-velocity': 'maximum-velocity',
+  'speed-endurance': 'speed-endurance',
+  'special-endurance': 'speed-endurance',
+  tempo: 'tempo-recovery',
+  plyometrics: 'plyometrics',
+  strength: 'strength',
+  recovery: 'tempo-recovery',
+  competition: 'competition',
+  testing: 'other',
+  mixed: 'mixed',
+};
 
 export const LOCAL_ATHLETE_ID = 'local-athlete';
 
@@ -187,16 +226,32 @@ const painAreaForLegacyLocation = (location?: string): PainArea => {
   }
 };
 
+/** A post-session "anything bothering you?" report, kept distinct from readiness's pre-session
+ * pain report by its description prefix — both live in the same painAreas array (the existing
+ * PainReport shape already fits this without a new field) rather than a second, parallel list. */
+function postSessionPainReport(review: PostWorkoutReview): PainReport | null {
+  if (!review.painArea) return null;
+  return {
+    area: review.painArea,
+    severity: null,
+    classification: 'not-recorded',
+    side: 'not-recorded',
+    description: ['Reported after this session.', review.monitorPain ? 'Athlete asked to monitor this.' : null].filter(Boolean).join(' '),
+  };
+}
+
 function readinessToDomain(session: ActiveWorkoutSession, review: PostWorkoutReview): ReadinessCheck {
   const readiness = session.readinessSnapshot;
   const contextPain = session.trainingContext?.painAreas;
-  const painAreas: ReadinessCheck['painAreas'] = contextPain?.length ? contextPain : readiness?.hasLocalizedIssue ? [{
+  const preSessionPainAreas: ReadinessCheck['painAreas'] = contextPain?.length ? contextPain : readiness?.hasLocalizedIssue ? [{
     area: painAreaForLegacyLocation(readiness.location),
-    severity: readiness.painSeverity ?? null,
+    severity: null,
     classification: readiness.sensation ?? 'not-recorded',
     side: 'not-recorded' as const,
     description: [readiness.otherLocationDetail, readiness.sensation, readiness.painNotes].filter(Boolean).join(' · '),
   }] : [];
+  const postSession = postSessionPainReport(review);
+  const painAreas = postSession ? [...preSessionPainAreas, postSession] : preSessionPainAreas;
   return {
     date: session.scheduledDate ?? readiness?.date ?? session.startedAt.slice(0, 10),
     sleepHours: readiness?.sleep ?? (review.sleep > 0 ? review.sleep : null),
@@ -209,8 +264,10 @@ function readinessToDomain(session: ActiveWorkoutSession, review: PostWorkoutRev
       ? readiness?.hydrated === true && readiness?.foodStatus !== 'underfueled'
       : readiness?.fuelHydrated ?? null,
     generalSoreness: zeroToTen(readiness?.soreness ?? review.soreness),
-    hamstringSoreness: zeroToTen(review.hamstring),
-    achillesSoreness: null,
+    // Derived from painAreas, never a hardcoded question — only set when the athlete actually
+    // reported that specific area today. See ReadinessCheck's doc comment.
+    hamstringSoreness: painAreas.find(pain => pain.area === 'hamstring')?.severity ?? null,
+    achillesSoreness: painAreas.find(pain => pain.area === 'achilles')?.severity ?? null,
     painAreas,
     warmupFeeling: readiness?.warmupReassessment === 'better'
       ? 'better'
@@ -347,35 +404,65 @@ export function buildStructuredTrainingLog(
     weather,
     wind: windToDomain(session),
     footwear: context?.footwear ?? 'unknown',
-    bodyWeight: review.bodyWeight ?? null,
+    // Body weight isn't asked in the post-workout review — TrainingLog.bodyWeight is edited
+    // directly on the History detail screen (app/history-detail.tsx) after the fact.
+    bodyWeight: null,
     generalNotes: review.notes,
     createdAt: finishedAt,
     updatedAt: finishedAt,
   };
 }
 
+export type ManualSessionInput = {
+  date: string; // ISO date the workout happened, athlete-editable, defaults to today in the UI
+  name: string;
+  category: LoggedSessionCategory;
+  description: string;
+  durationMinutes?: number;
+  activities: LoggedActivity[];
+  /** Set only when the athlete deliberately linked this entry to a real scheduled day (see
+   * app/log.tsx's "Use today's plan" flow) — never inferred, so an unplanned session can never be
+   * silently treated as matching a plan it wasn't actually linked to. */
+  linkedScheduledDate?: string;
+};
+
 export function buildManualTrainingLog(
+  input: ManualSessionInput,
   review: PostWorkoutReview,
   finishedAt: string,
   athleteId = LOCAL_ATHLETE_ID,
   historyLogId?: string,
 ): TrainingLog {
   const id = historyLogId ?? `manual-log:${finishedAt}`;
+  const manualDetails: ManualWorkoutDetails = {
+    category: input.category,
+    description: input.description,
+    durationMinutes: input.durationMinutes,
+    activities: input.activities,
+  };
+  // Without a linked scheduled day there is no plan to be "completed as scheduled" against — the
+  // session either happened (this record exists) or it doesn't; there's no partial-vs-planned
+  // distinction to make. Only a linked entry can be genuinely partial/modified relative to a plan.
+  const completionStatus: WorkoutCompletionStatus = !input.linkedScheduledDate
+    ? 'completed-as-planned'
+    : review.completed
+      ? 'completed-as-planned'
+      : 'partial';
   return {
     id,
     athleteId,
-    scheduledWorkoutId: null,
+    scheduledWorkoutId: input.linkedScheduledDate ? `scheduled:${athleteId}:${input.linkedScheduledDate}` : null,
     workoutId: 'manual-session',
     plannedWorkout: {
       id: 'manual-session',
-      name: 'Unplanned session',
-      description: 'A session entered manually after training.',
-      purpose: 'Record training completed outside a scheduled workout.',
-      trainingCategory: 'mixed',
+      name: input.name,
+      description: input.description,
+      purpose: input.description,
+      trainingCategory: sessionCategoryToWorkoutCategory[input.category],
       eventPathways: [],
       athleteLevels: [],
       seasonPhases: [],
-      estimatedDurationMinutes: 0,
+      estimatedDurationMinutes: input.durationMinutes ?? 0,
       requiredEquipment: [],
       allowedSurfaces: [],
       totalSprintVolumeMeters: 0,
@@ -386,10 +473,10 @@ export function buildManualTrainingLog(
       version: 1,
       approvalStatus: 'draft',
     },
-    date: finishedAt.slice(0, 10),
+    date: input.date || finishedAt.slice(0, 10),
     startedAt: finishedAt,
     completedAt: finishedAt,
-    completionStatus: review.completed ? 'completed-as-planned' : 'partial',
+    completionStatus,
     sessionRpe: oneToTen(review.rpe),
     readiness: {
       date: finishedAt.slice(0, 10),
@@ -401,9 +488,9 @@ export function buildManualTrainingLog(
       stress: null,
       fuelHydrated: null,
       generalSoreness: zeroToTen(review.soreness),
-      hamstringSoreness: zeroToTen(review.hamstring),
+      hamstringSoreness: null,
       achillesSoreness: null,
-      painAreas: [],
+      painAreas: postSessionPainReport(review) ? [postSessionPainReport(review)!] : [],
       warmupFeeling: 'not-recorded',
       notes: '',
     },
@@ -412,9 +499,12 @@ export function buildManualTrainingLog(
     weather: { type: 'unknown', temperatureCelsius: null, humidityPercent: null, notes: '' },
     wind: { type: 'unknown', measuredMetersPerSecond: null },
     footwear: 'unknown',
-    bodyWeight: review.bodyWeight ?? null,
+    // Body weight isn't asked in the post-workout review — TrainingLog.bodyWeight is edited
+    // directly on the History detail screen (app/history-detail.tsx) after the fact.
+    bodyWeight: null,
     generalNotes: review.notes,
     createdAt: finishedAt,
     updatedAt: finishedAt,
+    manualDetails,
   };
 }

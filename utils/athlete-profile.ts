@@ -163,7 +163,6 @@ export function migrateAthleteProfile(raw: AthleteProfile): AthleteProfile {
     busySchoolDays: raw.busySchoolDays ?? [],
     commitmentSchedulePlaced: raw.commitmentSchedulePlaced
       ?? Boolean(raw.onboardingComplete),
-    currentTeamTrainingLoad: raw.currentTeamTrainingLoad ?? 'unknown',
     courtAccess: raw.courtAccess ?? 'none',
     sledAccess: raw.sledAccess ?? 'none',
     timingGatesAccess: raw.timingGatesAccess ?? 'none',
@@ -269,13 +268,31 @@ export async function resetAthleteOnboarding() {
   await clearAthleteOnboardingDraft();
 }
 
-/** Testing-only escape hatch: removes every locally stored key owned by SprintLab. */
+/**
+ * The single centralized "Erase all local app data" implementation — settings.tsx's destructive
+ * reset button is the only real entry point, but any future entry point should call this same
+ * function rather than growing its own partial reset logic.
+ *
+ * Order matters: notifications are cancelled BEFORE the storage wipe (cancellation reads
+ * SprintLab's own stored reminder-id list, so it must happen while that data still exists), then
+ * every AsyncStorage key is cleared in one call — this is the app's only persistence mechanism
+ * (confirmed: no SecureStore/file-system/SQLite usage exists anywhere in the codebase), so
+ * clearing it removes the profile, onboarding answers, generated plan, week schedule (+ history),
+ * every completed/partial/abandoned session, training logs, readiness history, PRs (part of the
+ * profile), Coach's locally-dismissed-trigger state, notification opt-in/setup flags, intro/
+ * onboarding-seen flags, and any development test data/snapshot (utils/dev-data.ts) in one pass —
+ * all of it lives under a `sprintlab*` AsyncStorage key with no exceptions. Streaks/milestones are
+ * never stored at all (always recomputed live), so there is nothing to separately reset for them.
+ *
+ * What this function cannot do: clear a screen's own in-memory React state (e.g. Coach's
+ * in-session conversation) — that's the caller's responsibility since it requires a hook, not a
+ * plain function; see settings.tsx's resetApp(), which also resets Coach's conversation via
+ * useCoach() immediately after calling this. It also cannot reset the OS-level notification
+ * permission itself — only SprintLab's own opt-in flag and its own scheduled notifications.
+ */
 export async function resetAllSprintLabLocalData() {
   await import('@/utils/workout-reminders')
-    .then(({ disableWorkoutReminders }) => disableWorkoutReminders())
+    .then(({ cancelAllSprintLabNotifications }) => cancelAllSprintLabNotifications())
     .catch(() => undefined);
-  // AsyncStorage is private to this installed app. Clearing the complete store
-  // is safer for the development reset than maintaining a prefix allow-list
-  // that can miss a newly introduced plan, draft, library, or workout key.
   await AsyncStorage.clear();
 }

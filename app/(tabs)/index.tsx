@@ -1,6 +1,6 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Card, Eyebrow, PrimaryButton, SprintLabBrandLockup } from '@/components/sprint-ui';
 import { useIntroTarget, useSprintLabIntro } from '@/components/sprintlab-intro-context';
@@ -9,12 +9,13 @@ import { ActiveWorkoutSession, AthleteProfile, CompletedWorkoutSession, PlannedW
 import { athleteFirstName, athleteInitial, getAthleteProfile, getTrainingWorkflow } from '@/utils/athlete-profile';
 import { evaluateReadiness, readinessLevelMeta, workoutIncludesMaximalSprinting } from '@/utils/readiness';
 import { sessionsForDate } from '@/utils/progress';
-import { getActiveWorkoutSession, getCompletedWorkoutSessions, getReadiness, getScheduleHistory, getScheduledDay, getScheduledDayForDate, getWeekSchedule, hasSavedWeekSchedule, startWorkoutSession } from '@/utils/storage';
+import { getActiveWorkoutSession, getCompletedWorkoutSessions, getReadiness, getScheduleHistory, getScheduledDay, getScheduledDayForDate, getWeekSchedule, hasSavedWeekSchedule } from '@/utils/storage';
 import { getSessionCoverage } from '@/utils/workout-session';
 import { consumeSprintLabIntroLaunchRequest } from '@/utils/sprintlab-intro';
 import { completeStep, error, tap } from '@/utils/haptics';
 import { calculatePlanStreak } from '@/utils/streaks';
 import { OPEN_DAY_RESTTITLE } from '@/data/workouts';
+import { prepareWorkoutLaunch } from '@/utils/workout-launch';
 
 const dateKey = (date = new Date()) => date.toLocaleDateString('en-CA');
 
@@ -25,6 +26,16 @@ const dateKey = (date = new Date()) => date.toLocaleDateString('en-CA');
  * explicitly marked as rest via Plan) keeps its own restTitle and is treated as planned recovery. */
 function isIntentionalRestDay(day: ScheduledDay | null): boolean {
   return day?.kind === 'rest' && day.restTitle !== OPEN_DAY_RESTTITLE;
+}
+
+function formatClock(seconds: number) {
+  const total = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  return hours
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+    : `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
 function greetingForHour(hour: number) {
@@ -127,6 +138,11 @@ export default function TodayScreen() {
   const readinessLabel = readiness?.status === 'completed' && readinessLevel === 'green' && !workout
     ? 'No readiness concerns'
     : readinessLevel ? readinessLevelMeta[readinessLevel].shortLabel : undefined;
+  // Routes through the same prepareWorkoutLaunch() every other launch site (Plan, Library,
+  // workout-builder, Coach) uses — Today must never keep its own separate "is a session already
+  // active?" check that could drift from that shared gate. The `activeSession` short-circuit below
+  // is just an optimization to skip the round-trip when we already know the answer from the last
+  // focus load; prepareWorkoutLaunch's own check is what actually prevents a second session.
   const startWorkout = async () => {
     if (completedToday) return; // already completed today — never re-create a session through this action
     if (activeSession) {
@@ -138,12 +154,15 @@ export default function TodayScreen() {
     if (readinessBlocksWorkout) return;
     if (!workout || exerciseCount === 0) return;
     try {
-      await startWorkoutSession(workout, readiness, {
-        scheduledDate: dateKey(),
-        scheduledDayIndex: todayIndex,
-      });
+      const result = await prepareWorkoutLaunch(workout, 'plan', { scheduledDate: dateKey(), scheduledDayIndex: todayIndex });
+      if (result === 'active-session') {
+        error();
+        Alert.alert('Workout already in progress', 'Finish or discard the active workout before starting another.', [{ text: 'Open workout', onPress: () => router.push('/workout') }]);
+        return;
+      }
       completeStep();
-      router.push('/workout');
+      if (result === 'readiness-required') router.push({ pathname: '/readiness', params: { launch: 'pending' } });
+      else router.push('/workout');
     } catch {
       error();
     }
@@ -166,6 +185,14 @@ export default function TodayScreen() {
   const athleteName = athleteFirstName(athlete);
   const greeting = athleteName ? `${greetingForHour(now.getHours())}, ${athleteName}` : undefined;
 
+  // The active-workout widget must stay visible regardless of what today's scheduled day looks
+  // like — an in-progress session started on a different day, or an unplanned one, would otherwise
+  // be entirely invisible on Today (the card below only ever reflects today's *scheduled* workout).
+  const activeCoverage = activeSession ? getSessionCoverage(activeSession) : null;
+  const activeElapsedSeconds = activeSession?.executionStartedAt
+    ? Math.floor((now.getTime() - new Date(activeSession.executionStartedAt).getTime()) / 1000)
+    : activeSession?.elapsedSeconds ?? 0;
+
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.page}>
     <View style={styles.headerText}>
       {greeting ? <Text style={styles.greeting}>{greeting}</Text> : null}
@@ -187,6 +214,22 @@ export default function TodayScreen() {
         <Pressable accessibilityLabel="Open profile and settings" onPress={() => { tap(); router.push('/settings'); }} style={styles.avatar}><Text style={styles.avatarText}>{athleteInitial(athlete)}</Text></Pressable>
       </View>
     </View>
+
+    {activeSession ? <Pressable accessibilityRole="button" accessibilityLabel={`Resume ${activeSession.plannedWorkoutSnapshot.title}, in progress`} onPress={() => { tap(); router.push('/workout'); }}>
+      <Card style={styles.activeWidget}>
+        <View style={styles.activeWidgetHead}>
+          <View style={styles.activeWidgetPulse} />
+          <Text style={styles.activeWidgetEyebrow}>WORKOUT IN PROGRESS</Text>
+          <Text style={styles.activeWidgetElapsed}>{formatClock(activeElapsedSeconds)}</Text>
+        </View>
+        <Text style={styles.activeWidgetTitle}>{activeSession.plannedWorkoutSnapshot.title}</Text>
+        {activeCoverage ? <View style={styles.activeWidgetProgressRow}>
+          <View style={styles.activeWidgetProgressTrack}><View style={[styles.activeWidgetProgressFill, { width: `${activeCoverage.planned ? (activeCoverage.completed / activeCoverage.planned) * 100 : 0}%` }]} /></View>
+          <Text style={styles.activeWidgetProgressText}>{activeCoverage.completed} of {activeCoverage.planned}</Text>
+        </View> : null}
+        <View style={styles.activeWidgetAction}><Text style={styles.activeWidgetActionText}>Resume workout</Text><MaterialIcons name="arrow-forward" size={16} color="#0B1000" /></View>
+      </Card>
+    </Pressable> : null}
 
     {needsPlanSetup ? <Pressable onPress={() => { tap(); router.push('/plan-preview'); }}><Card style={styles.setupCard}>
       <View style={styles.iconCircle}><MaterialIcons name="auto-awesome" size={22} color={palette.accent} /></View>
@@ -281,6 +324,18 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: palette.surface2, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: palette.border }, avatarText: { color: palette.text, fontWeight: '800' },
   emptyReadiness: { flexDirection: 'row', alignItems: 'center', gap: 12, borderStyle: 'dashed', paddingVertical: 12 }, iconCircle: { width: 40, height: 40, borderRadius: 12, backgroundColor: palette.accentDark, alignItems: 'center', justifyContent: 'center' },
   setupCard: { flexDirection: 'row', alignItems: 'center', gap: 12, borderColor: palette.accentDark },
+  activeWidget: { gap: 9, borderColor: palette.accent, backgroundColor: palette.accentDark },
+  activeWidgetHead: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  activeWidgetPulse: { width: 8, height: 8, borderRadius: 4, backgroundColor: palette.accent },
+  activeWidgetEyebrow: { flex: 1, color: palette.accent, fontSize: 10, fontWeight: '900', letterSpacing: 1.1 },
+  activeWidgetElapsed: { color: palette.text, fontSize: 12, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  activeWidgetTitle: { color: palette.text, fontSize: 18, fontWeight: '900' },
+  activeWidgetProgressRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  activeWidgetProgressTrack: { flex: 1, height: 4, borderRadius: 2, backgroundColor: palette.surface2, overflow: 'hidden' },
+  activeWidgetProgressFill: { height: 4, backgroundColor: palette.accent },
+  activeWidgetProgressText: { color: palette.muted, fontSize: 11, fontWeight: '800' },
+  activeWidgetAction: { minHeight: 42, borderRadius: 11, backgroundColor: palette.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 2 },
+  activeWidgetActionText: { color: '#0B1000', fontSize: 13, fontWeight: '900' },
   cardHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }, cardTitle: { color: palette.text, fontSize: 17, fontWeight: '900' }, cardCopy: { color: palette.muted, fontSize: 13, lineHeight: 19 }, headActions: { flexDirection: 'row' }, editButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   eyebrowRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   completedBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8, backgroundColor: palette.accentDark },

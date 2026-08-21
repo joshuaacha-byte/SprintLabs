@@ -109,9 +109,7 @@ export async function updateTrainingLog(log: TrainingLog) {
           completed: updated.completionStatus.startsWith('completed'),
           rpe: updated.sessionRpe ?? session.review.rpe,
           sleep: updated.readiness.sleepHours ?? session.review.sleep,
-          hamstring: updated.readiness.hamstringSoreness ?? session.review.hamstring,
           soreness: updated.readiness.generalSoreness ?? session.review.soreness,
-          bodyWeight: updated.bodyWeight ?? undefined,
           notes: updated.generalNotes,
         },
       };
@@ -122,7 +120,6 @@ export async function updateTrainingLog(log: TrainingLog) {
       completed: updated.completionStatus.startsWith('completed'),
       rpe: updated.sessionRpe ?? summary.rpe,
       sleep: updated.readiness.sleepHours ?? summary.sleep,
-      hamstring: updated.readiness.hamstringSoreness ?? summary.hamstring,
       soreness: updated.readiness.generalSoreness ?? summary.soreness,
       bodyWeight: updated.bodyWeight ?? undefined,
       notes: updated.generalNotes,
@@ -482,4 +479,79 @@ export async function addDismissedCoachTriggerId(id: string) {
  * (missed workout, high RPE, low readiness, etc.) become eligible to surface again for testing. */
 export async function clearDismissedCoachTriggerIds() {
   await AsyncStorage.removeItem(DISMISSED_COACH_TRIGGERS);
+}
+
+// --- Development Data Controls (utils/dev-data.ts is the only caller) ---------------------
+
+/** Every record utils/dev-data.ts generates carries an id starting with this prefix, so
+ * generated test data can be found and removed without touching real completed-session/log
+ * records, which never use this prefix. */
+export const DEV_TEST_RECORD_PREFIX = 'dev-test:';
+
+const DEV_DATA_SNAPSHOT = 'sprintlab:dev-data-snapshot';
+
+type DevDataSnapshot = {
+  savedAt: string;
+  logs: string | null;
+  trainingHistory: string | null;
+  completedSessions: string | null;
+  weekSchedule: string | null;
+  weekScheduleHistory: string | null;
+};
+
+/** Removes every training record whose id carries DEV_TEST_RECORD_PREFIX — reuses the same
+ * deleteTrainingLog() path History's own delete action uses, so logs/trainingHistory/
+ * completedSessions all stay consistent with each other, exactly as a real deletion would. */
+export async function clearGeneratedDevTestData(): Promise<number> {
+  const logs = await getTrainingLogs();
+  const generated = logs.filter(log => log.id.startsWith(DEV_TEST_RECORD_PREFIX) || log.id.startsWith(`domain-log:${DEV_TEST_RECORD_PREFIX}`));
+  for (const log of generated) await deleteTrainingLog(log.id);
+  return generated.length;
+}
+
+export async function hasGeneratedDevTestData(): Promise<boolean> {
+  const logs = await getTrainingLogs();
+  return logs.some(log => log.id.startsWith(DEV_TEST_RECORD_PREFIX) || log.id.startsWith(`domain-log:${DEV_TEST_RECORD_PREFIX}`));
+}
+
+/** Snapshots exactly the AsyncStorage keys dev-data generation touches, as raw JSON strings —
+ * restoring replaces those keys byte-for-byte rather than attempting a field-level merge, so
+ * "Restore snapshot" genuinely undoes everything generation did, including deletions. Overwrites
+ * any previous snapshot — SprintLab only ever keeps one at a time, matching the single Save/
+ * Restore pair the Development Data screen exposes. */
+export async function saveDevDataSnapshot(): Promise<void> {
+  const [logs, trainingHistory, completedSessions, weekSchedule, weekScheduleHistory] = await Promise.all([
+    AsyncStorage.getItem(LOGS),
+    AsyncStorage.getItem(TRAINING_HISTORY),
+    AsyncStorage.getItem(COMPLETED_SESSIONS),
+    AsyncStorage.getItem(WEEK_SCHEDULE),
+    AsyncStorage.getItem(WEEK_SCHEDULE_HISTORY),
+  ]);
+  const snapshot: DevDataSnapshot = { savedAt: new Date().toISOString(), logs, trainingHistory, completedSessions, weekSchedule, weekScheduleHistory };
+  await AsyncStorage.setItem(DEV_DATA_SNAPSHOT, JSON.stringify(snapshot));
+}
+
+export async function hasDevDataSnapshot(): Promise<string | null> {
+  const value = await AsyncStorage.getItem(DEV_DATA_SNAPSHOT);
+  if (!value) return null;
+  return (JSON.parse(value) as DevDataSnapshot).savedAt;
+}
+
+export async function restoreDevDataSnapshot(): Promise<boolean> {
+  const value = await AsyncStorage.getItem(DEV_DATA_SNAPSHOT);
+  if (!value) return false;
+  const snapshot = JSON.parse(value) as DevDataSnapshot;
+  const restore = (key: string, data: string | null) => data ? AsyncStorage.setItem(key, data) : AsyncStorage.removeItem(key);
+  await Promise.all([
+    restore(LOGS, snapshot.logs),
+    restore(TRAINING_HISTORY, snapshot.trainingHistory),
+    restore(COMPLETED_SESSIONS, snapshot.completedSessions),
+    restore(WEEK_SCHEDULE, snapshot.weekSchedule),
+    restore(WEEK_SCHEDULE_HISTORY, snapshot.weekScheduleHistory),
+  ]);
+  return true;
+}
+
+export async function clearDevDataSnapshot(): Promise<void> {
+  await AsyncStorage.removeItem(DEV_DATA_SNAPSHOT);
 }

@@ -67,6 +67,20 @@ async function cancelOwnedReminders() {
   await AsyncStorage.removeItem(REMINDER_IDS_KEY);
 }
 
+/** A full-device reset's notification step: cancels every notification actually scheduled with
+ * iOS/Android, not just the ones cancelOwnedReminders() has an id on file for. Workout reminders
+ * are the only thing this app ever schedules (confirmed: this file is the only
+ * scheduleNotificationAsync call site in the codebase), so a blanket cancel is safe and is a
+ * stronger guarantee than id-tracked cancellation alone — e.g. it still works if REMINDER_IDS_KEY
+ * was ever out of sync with what was actually scheduled. Does not and cannot touch the OS-level
+ * notification permission itself (see utils/notification-permission.ts). */
+export async function cancelAllSprintLabNotifications() {
+  const Notifications = await notificationsModule();
+  if (!Notifications) return;
+  await Notifications.cancelAllScheduledNotificationsAsync().catch(() => undefined);
+  await AsyncStorage.removeItem(REMINDER_IDS_KEY);
+}
+
 async function configureNotifications() {
   const Notifications = await notificationsModule();
   if (!Notifications) return null;

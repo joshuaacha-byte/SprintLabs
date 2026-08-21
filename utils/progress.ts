@@ -356,6 +356,34 @@ export function buildRecoveryTrend(
   };
 }
 
+export type RecurringPainArea = { area: string; count: number; lastDate: string; monitored: boolean };
+
+/**
+ * Surfaces a body area only once it's been flagged more than once in the recent window —
+ * deliberately never reacts to a single report (a single mention could just be one hard session).
+ * Reads the same TrainingLogSummary.painArea Log a Session already writes; no separate storage.
+ */
+export function buildRecurringPainAreas(logs: TrainingLogSummary[], now = new Date(), dayCount = 30): RecurringPainArea[] {
+  const cutoffKey = toLocalDateKey(addDays(new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12), -dayCount));
+  const byArea = new Map<string, { count: number; lastDate: string; monitored: boolean }>();
+  for (const log of logs) {
+    if (!log.painArea) continue;
+    const dateKey = toLocalDateKey(new Date(log.date));
+    if (dateKey < cutoffKey) continue;
+    const area = log.painArea as string;
+    const existing = byArea.get(area);
+    byArea.set(area, {
+      count: (existing?.count ?? 0) + 1,
+      lastDate: !existing || dateKey > existing.lastDate ? dateKey : existing.lastDate,
+      monitored: Boolean(existing?.monitored || log.monitorPain),
+    });
+  }
+  return [...byArea.entries()]
+    .filter(([, value]) => value.count >= 2 || value.monitored)
+    .map(([area, value]) => ({ area, ...value }))
+    .sort((first, second) => second.count - first.count || second.lastDate.localeCompare(first.lastDate));
+}
+
 export function buildRecentSessions(
   logs: TrainingLogSummary[],
   sessions: CompletedWorkoutSession[],

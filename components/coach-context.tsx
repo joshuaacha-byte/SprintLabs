@@ -83,6 +83,12 @@ type CoachContextValue = {
   applyProposal: (messageId: string) => Promise<void>;
   /** Declines a pending proposal. Never mutates the plan, never calls Gemini. */
   dismissProposal: (messageId: string) => void;
+  /** Clears this session's in-memory conversation/trigger/open state. Coach's conversation is
+   * never persisted (a fresh app launch already starts empty — see the module doc comment above),
+   * but CoachProvider itself stays mounted across an in-app "Erase all local app data," so without
+   * this the old conversation would still be visible until the app fully restarts. Settings' reset
+   * action calls this immediately after resetAllSprintLabLocalData(). */
+  resetConversation: () => void;
 };
 
 const CoachContext = createContext<CoachContextValue | null>(null);
@@ -139,6 +145,15 @@ export function CoachProvider({ children }: PropsWithChildren) {
   }, []);
 
   const closeCoach = useCallback(() => setIsOpen(false), []);
+
+  const resetConversation = useCallback(() => {
+    setIsOpen(false);
+    setOpenContext(null);
+    setMessages([]);
+    setHasAttention(false);
+    setActiveTrigger(null);
+    currentEntityRef.current = null;
+  }, []);
 
   const sendMessage = useCallback(async (displayText: string, promptOverride?: string) => {
     const trimmed = displayText.trim();
@@ -295,7 +310,8 @@ export function CoachProvider({ children }: PropsWithChildren) {
     sendMessage,
     applyProposal,
     dismissProposal,
-  }), [isOpen, openContext, openCoach, closeCoach, hasAttention, activeTrigger, registerCurrentEntity, messages, isSending, sendMessage, applyProposal, dismissProposal]);
+    resetConversation,
+  }), [isOpen, openContext, openCoach, closeCoach, hasAttention, activeTrigger, registerCurrentEntity, messages, isSending, sendMessage, applyProposal, dismissProposal, resetConversation]);
 
   return <CoachContext.Provider value={value}>{children}</CoachContext.Provider>;
 }

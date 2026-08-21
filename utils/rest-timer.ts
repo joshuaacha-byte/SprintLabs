@@ -7,7 +7,8 @@ import type { RestTimerState } from '@/types';
 // counter — so backgrounding the app or locking the phone (which suspends JS execution, not the
 // real clock) can never leave the displayed time wrong: the very next render recomputes it exactly.
 
-/** A fresh, not-yet-started rest timer for the athlete's real prescribed duration. */
+/** A fresh, not-yet-started rest timer for a manually chosen duration (see app/workout.tsx's
+ * duration-preset picker) — never derived from workout, exercise, or plan-library data. */
 export function createRestTimer(totalSeconds: number, next: string): RestTimerState {
   return { totalSeconds, next, running: false, remainingSeconds: totalSeconds };
 }

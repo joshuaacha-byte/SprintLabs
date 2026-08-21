@@ -31,7 +31,7 @@ function session(id: string, dateKey: string, rpe: number, notes: string): Compl
     elapsedSeconds: 1800,
     actualResults: [],
     finishedAt: `${dateKey}T10:00:00.000Z`,
-    review: { completed: true, rpe, energy: 4, sleep: 7, hamstring: 0, soreness: 1, notes },
+    review: { completed: true, rpe, energy: 4, sleep: 7, soreness: 1, notes },
   };
 }
 
@@ -48,7 +48,6 @@ const logs: TrainingLogSummary[] = sessions.map((s, index) => ({
   rpe: s.review.rpe,
   energy: s.review.energy,
   sleep: s.review.sleep,
-  hamstring: s.review.hamstring,
   soreness: s.review.soreness,
   notes: s.review.notes,
   workoutTitle: 'Acceleration development',
@@ -87,7 +86,7 @@ check('PRs are carried through from the profile, event-tagged', () => {
 check('recentTraining is bounded even with more sessions than the limit', () => {
   const manySessions = Array.from({ length: 20 }, (_, i) => session(`s${i}`, `2026-08-${String(1 + (i % 12)).padStart(2, '0')}`, 6, 'note'));
   const manyLogs: TrainingLogSummary[] = manySessions.map((s, index) => ({
-    id: `log-many-${index}`, sessionId: s.id, date: s.finishedAt, completed: true, rpe: 6, energy: 4, sleep: 7, hamstring: 0, soreness: 1, notes: 'note', workoutTitle: 'Session',
+    id: `log-many-${index}`, sessionId: s.id, date: s.finishedAt, completed: true, rpe: 6, energy: 4, sleep: 7, soreness: 1, notes: 'note', workoutTitle: 'Session',
   }));
   const context = buildAthleteAIContext({ profile, schedule, scheduleHistory: [], sessions: manySessions, logs: manyLogs, readiness, libraryWorkouts: [], now });
   assert(context.recentTraining.length <= 8, `expected recentTraining bounded to 8, got ${context.recentTraining.length}`);

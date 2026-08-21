@@ -143,7 +143,7 @@ function clearedSportSpecificAnswers(): Partial<AthleteProfile> {
 
 function blankProfile(): AthleteProfile {
   const now = new Date().toISOString();
-  return { id: 'local-athlete', name: '', ageRange: '16-17', competitionCategory: 'high-school', primaryEvent: '100m', secondaryEvents: [], personalBests: [], experienceLevel: 'developing', seasonPhase: 'general-preparation', trainingDaysPerWeek: 0, availableTrainingDays: [], exactTrainingDaysPreference: undefined, preferredRestDay: 'sunday', preferredRestDayAnswered: false, usualSessionDurationMinutes: 60, trackAccess: 'regular', grassAccess: 'regular', hillAccess: 'none', indoorAccess: 'none', startingBlocksAccess: 'none', weightRoomAccess: 'none', homeEquipment: ['none'], coachInvolvement: 'none', liftingExperience: 'beginner', blockStartExperience: 'none', primaryGoal: 'build-speed', nextMeetDate: null, championshipDate: null, loggingOnlyMode: false, sport: 'track-and-field', primarySport: undefined, sports: [], sportPosition: null, speedGoals: [], competitionLevel: 'high-school', trainingContext: 'general-development', primaryPerformanceTest: null, secondaryPerformanceTests: [], sportPracticeDays: [], gameOrCompetitionDays: [], gameScheduleVaries: false, otherSportDays: [], busySchoolDays: [], commitmentSchedulePlaced: false, currentTeamTrainingLoad: 'unknown', courtAccess: 'none', turfAccess: 'regular', sledAccess: 'none', timingGatesAccess: 'none', conesAccess: 'regular', trainingPlanMode: undefined, trainingPlanModeAnswered: false, currentPain: false, cautionAreas: [], onboardingLimitations: [], trainingConcernDetails: [], otherConcernArea: '', returningAfterTimeOff: false, trainingConstraintsReviewed: false, currentTrainingDemands: [], workoutReminderEnabled: false, workoutReminderHour: 16, workoutReminderMinute: 0, workoutReminderCustomTime: false, workoutReminderAnswered: false, raceDevelopmentAreas: [], targetPerformances: [], seasonCalendar: { competitionStatus: 'unknown', priorityMeets: [] }, seasonPhaseOverride: null, createdAt: now, updatedAt: now, onboardingComplete: false, experienceAnswered: false, sportProfileAnswered: false, primarySportAnswered: false, trackEventsAnswered: false, trackMainEventAnswered: false };
+  return { id: 'local-athlete', name: '', ageRange: '16-17', competitionCategory: 'high-school', primaryEvent: '100m', secondaryEvents: [], personalBests: [], experienceLevel: 'developing', seasonPhase: 'general-preparation', trainingDaysPerWeek: 0, availableTrainingDays: [], exactTrainingDaysPreference: undefined, preferredRestDay: 'sunday', preferredRestDayAnswered: false, usualSessionDurationMinutes: 60, trackAccess: 'regular', grassAccess: 'regular', hillAccess: 'none', indoorAccess: 'none', startingBlocksAccess: 'none', weightRoomAccess: 'none', homeEquipment: ['none'], coachInvolvement: 'none', liftingExperience: 'beginner', blockStartExperience: 'none', primaryGoal: 'build-speed', nextMeetDate: null, championshipDate: null, loggingOnlyMode: false, sport: 'track-and-field', primarySport: undefined, sports: [], sportPosition: null, speedGoals: [], competitionLevel: 'high-school', trainingContext: 'general-development', primaryPerformanceTest: null, secondaryPerformanceTests: [], sportPracticeDays: [], gameOrCompetitionDays: [], gameScheduleVaries: false, otherSportDays: [], busySchoolDays: [], commitmentSchedulePlaced: false, courtAccess: 'none', turfAccess: 'regular', sledAccess: 'none', timingGatesAccess: 'none', conesAccess: 'regular', trainingPlanMode: undefined, trainingPlanModeAnswered: false, currentPain: false, cautionAreas: [], onboardingLimitations: [], trainingConcernDetails: [], otherConcernArea: '', returningAfterTimeOff: false, trainingConstraintsReviewed: false, currentTrainingDemands: [], workoutReminderEnabled: false, workoutReminderHour: 16, workoutReminderMinute: 0, workoutReminderCustomTime: false, workoutReminderAnswered: false, raceDevelopmentAreas: [], targetPerformances: [], seasonCalendar: { competitionStatus: 'unknown', priorityMeets: [] }, seasonPhaseOverride: null, createdAt: now, updatedAt: now, onboardingComplete: false, experienceAnswered: false, sportProfileAnswered: false, primarySportAnswered: false, trackEventsAnswered: false, trackMainEventAnswered: false };
 }
 
 /**
@@ -546,7 +546,7 @@ function Welcome({ onContinue, onOpenDebugMenu }: { onContinue: () => void; onOp
 }
 function Question({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) { const palette = useTheme(); const styles = useMemo(() => createStyles(palette), [palette]); return <View style={styles.question}><Text style={styles.questionTitle}>{title}</Text>{subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}{children}</View>; }
 
-function NameStep({ profile, update }: Props) { return <Question title="What should I call you?" subtitle="A first name is optional, and stays on this device."><PerformanceInput value={profile.name} onChangeText={name => update({ name })} placeholder="First name" keyboardType="default" /></Question>; }
+function NameStep({ profile, update }: Props) { return <Question title="What should I call you?" subtitle="A first name is optional, and stays on this device."><PerformanceInput value={profile.name} onChangeText={name => update({ name })} placeholder="First name" keyboardType="default" textContentType="name" autoComplete="name" /></Question>; }
 function SportsStep({ profile, update }: Props) {
   const palette = useTheme();
   const styles = useMemo(() => createStyles(palette), [palette]);
@@ -1445,8 +1445,6 @@ function SeasonStep({ profile, update }: Props) {
         championshipDate: null,
         priorityMeets: retainedMeets,
       },
-      nextMeetDate: null,
-      championshipDate: null,
     });
   };
   const syncDate = (key: SeasonDateKey, date: string | null) => {
@@ -1474,8 +1472,6 @@ function SeasonStep({ profile, update }: Props) {
     }
     update({
       seasonCalendar: { ...nextCalendar, priorityMeets: retainedMeets },
-      nextMeetDate: nextCalendar.firstMeetDate ?? null,
-      championshipDate: nextCalendar.championshipDate ?? null,
     });
   };
   const clearDates = () => {
@@ -1489,8 +1485,6 @@ function SeasonStep({ profile, update }: Props) {
         championshipDate: null,
         priorityMeets: retainedMeets,
       },
-      nextMeetDate: null,
-      championshipDate: null,
     });
   };
   return <Question title="Where are you in your competitive year?" subtitle="Choose the closest status. Estimated dates are fine and can be changed later.">

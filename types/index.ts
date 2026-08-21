@@ -1,5 +1,8 @@
 import type {
   FootwearType,
+  LoggedSessionCategory,
+  ManualWorkoutDetails,
+  PainArea,
   PainSeverity,
   PainReport,
   SprintEvent,
@@ -97,7 +100,6 @@ export type ReadinessDecision = {
   sensation?: ReadinessSensation;
   location?: ReadinessLocation;
   otherLocationDetail?: string;
-  painSeverity?: PainSeverity;
   hesitatesAtMaxEffort?: boolean;
   readinessLevel?: ReadinessLevel;
   readinessReasons?: string[];
@@ -231,10 +233,14 @@ export type PostWorkoutReview = {
   rpe: number;
   energy: number;
   sleep: number;
-  hamstring: number;
   soreness: number;
-  bodyWeight?: number;
   notes: string;
+  /** A specific area the athlete flagged after this session, distinct from general soreness —
+   * optional and quick (a single selectable area, no forced severity/description). Reuses the
+   * same PainArea taxonomy as onboarding's training-concern areas and readiness's pain reports. */
+  painArea?: PainArea | null;
+  /** True when the athlete wants this area watched going forward, not just noted once. */
+  monitorPain?: boolean;
 };
 
 export type CompletedWorkoutSession = ActiveWorkoutSession & {
@@ -252,14 +258,23 @@ export type TrainingLogSummary = {
   rpe: number;
   energy: number;
   sleep: number;
-  hamstring: number;
+  /** Legacy field from before the hamstring-specific question was removed from Log Session —
+   * only ever present on records saved before that change. Never written by current code. */
+  hamstring?: number;
   soreness: number;
-  sprintTime?: number;
   bodyWeight?: number;
   notes: string;
+  /** Mirrors PostWorkoutReview.painArea/monitorPain — kept on the lightweight summary too so
+   * Progress/Coach can read recent pain-area patterns without loading every full TrainingLog. */
+  painArea?: PainArea | null;
+  monitorPain?: boolean;
   workoutTitle?: string;
   exercisesCompleted?: number;
   exercisesPlanned?: number;
+  /** Set for a manually logged session; mirrors TrainingLog.manualDetails so Progress, AI context,
+   * and Coach triggers can read the real workout without a second lookup into TrainingLog. */
+  category?: LoggedSessionCategory;
+  manualDetails?: ManualWorkoutDetails | null;
 };
 
 export type FutureWorkoutOverride = {
@@ -310,6 +325,9 @@ export type {
   ISODateString,
   ISODateTimeString,
   GeneralSpeedProfile,
+  LoggedActivity,
+  LoggedSessionCategory,
+  ManualWorkoutDetails,
   ModificationReason,
   OneToFive,
   OneToTen,
@@ -365,7 +383,6 @@ export type {
   TimingMethod,
   TargetPerformance,
   TrackProfile,
-  SprintConsistency,
 } from './domain';
 
 export type {

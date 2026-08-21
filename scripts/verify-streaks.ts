@@ -43,7 +43,6 @@ const review = (completed: boolean): PostWorkoutReview => ({
   rpe: 6,
   energy: 4,
   sleep: 7,
-  hamstring: 0,
   soreness: 1,
   notes: '',
 });

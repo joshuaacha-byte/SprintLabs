@@ -141,11 +141,6 @@ function readinessLocationToPainArea(readiness: ReadinessDecision): PainArea {
 }
 
 function createTrainingContext(readiness: ReadinessDecision): SessionTrainingContext {
-  const severity = typeof readiness.painSeverity === 'number'
-    && readiness.painSeverity >= 0
-    && readiness.painSeverity <= 10
-    ? readiness.painSeverity as SessionTrainingContext['painAreas'][number]['severity']
-    : null;
   const description = [
     readiness.otherLocationDetail,
     readiness.sensation,
@@ -163,7 +158,7 @@ function createTrainingContext(readiness: ReadinessDecision): SessionTrainingCon
     },
     painAreas: readiness.hasLocalizedIssue ? [{
       area: readinessLocationToPainArea(readiness),
-      severity,
+      severity: null,
       classification: readiness.sensation ?? 'not-recorded',
       side: 'not-recorded',
       description,

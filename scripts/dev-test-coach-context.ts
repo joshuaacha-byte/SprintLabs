@@ -34,7 +34,7 @@ function session(id: string, dateKey: string, rpe: number, notes: string): Compl
     elapsedSeconds: 1800,
     actualResults: [],
     finishedAt: `${dateKey}T10:00:00.000Z`,
-    review: { completed: true, rpe, energy: 4, sleep: 7, hamstring: 2, soreness: 3, notes },
+    review: { completed: true, rpe, energy: 4, sleep: 7, soreness: 3, notes },
   };
 }
 
@@ -51,7 +51,6 @@ const logs: TrainingLogSummary[] = sessions.map((s, index) => ({
   rpe: s.review.rpe,
   energy: s.review.energy,
   sleep: s.review.sleep,
-  hamstring: s.review.hamstring,
   soreness: s.review.soreness,
   notes: s.review.notes,
   workoutTitle: 'Acceleration development',

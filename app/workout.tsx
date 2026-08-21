@@ -143,10 +143,44 @@ function NumberInput({
   />;
 }
 
+/** Practical rest durations the athlete can pick from — not derived from any workout, plan, or
+ * exercise data. Purely a manual convenience list. */
+const REST_PRESETS_SECONDS = [30, 60, 90, 120, 180, 300];
+const formatPresetLabel = (seconds: number) => seconds < 60 ? `${seconds} sec` : `${Math.round(seconds / 60)} min`;
+
+/** The athlete deliberately opens this — never triggered by completing a rep, set, or exercise.
+ * Picking a duration starts the timer immediately (there is no separate "not started" state to
+ * opt into; choosing the duration IS the opt-in). */
+function RestPresetPicker({ palette, styles, onPick, onCancel }: {
+  palette: Palette;
+  styles: ReturnType<typeof createStyles>;
+  onPick: (seconds: number) => void;
+  onCancel: () => void;
+}) {
+  return <View style={styles.restCard}>
+    <View style={styles.restHead}>
+      <MaterialIcons name="timer" size={16} color={palette.accent} />
+      <Text style={styles.restEyebrow}>REST TIMER</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel="Cancel rest timer" onPress={onCancel} hitSlop={8}>
+        <MaterialIcons name="close" size={16} color={palette.muted} />
+      </Pressable>
+    </View>
+    <View style={styles.restPresetRow}>{REST_PRESETS_SECONDS.map(seconds => <Pressable
+      key={seconds}
+      accessibilityRole="button"
+      accessibilityLabel={`Start ${formatPresetLabel(seconds)} rest timer`}
+      onPress={() => onPick(seconds)}
+      style={styles.restPresetChip}
+    >
+      <Text style={styles.restPresetChipText}>{formatPresetLabel(seconds)}</Text>
+    </Pressable>)}</View>
+  </View>;
+}
+
 /** The rest countdown — always derived from restRemainingSeconds(restTimer, now), never a locally
  * decremented number, so it reads correctly on the very first render after the app was backgrounded
- * or the phone was locked. Three states: not yet started (prescribed duration shown, athlete opts
- * in), running/paused (large live countdown), and finished (frozen at zero until dismissed). */
+ * or the phone was locked. Only two states once created: running/paused (large live countdown), and
+ * finished (frozen at zero until dismissed) — the timer is already running the moment it exists. */
 function RestCard({ restTimer, now, palette, styles, onStartPause, onAddSeconds, onDismiss }: {
   restTimer: RestTimerState;
   now: number;
@@ -158,28 +192,17 @@ function RestCard({ restTimer, now, palette, styles, onStartPause, onAddSeconds,
 }) {
   const remaining = restRemainingSeconds(restTimer, now);
   const finished = !restTimer.running && remaining <= 0;
-  const notStarted = !restTimer.running && !finished && remaining === restTimer.totalSeconds;
 
   return <View style={styles.restCard}>
     <View style={styles.restHead}>
       <MaterialIcons name="timer" size={16} color={palette.accent} />
       <Text style={styles.restEyebrow}>{finished ? 'REST COMPLETE' : 'REST'}</Text>
-      <Text numberOfLines={1} style={styles.restNext}>Next: {restTimer.next}</Text>
     </View>
     <Text style={styles.restClock}>{formatClock(remaining)}</Text>
     {finished ? (
       <Pressable accessibilityRole="button" onPress={onDismiss} style={styles.restPrimaryButton}>
         <Text style={styles.restPrimaryButtonText}>Continue</Text>
       </Pressable>
-    ) : notStarted ? (
-      <View style={styles.restControlsRow}>
-        <Pressable accessibilityRole="button" onPress={onStartPause} style={styles.restPrimaryButton}>
-          <Text style={styles.restPrimaryButtonText}>Start rest</Text>
-        </Pressable>
-        <Pressable accessibilityRole="button" accessibilityLabel="Skip rest" onPress={onDismiss} style={styles.restTextControl}>
-          <Text style={styles.restTextControlLabel}>Skip</Text>
-        </Pressable>
-      </View>
     ) : (
       <View style={styles.restControlsRow}>
         <Pressable accessibilityRole="button" accessibilityLabel="Add 30 seconds" onPress={onAddSeconds} style={styles.restTextControl}>
@@ -258,6 +281,9 @@ export default function WorkoutScreen() {
   // pulse so the countdown, which is always recomputed from restTimer.endsAt vs. this timestamp,
   // visibly ticks once a second while running.
   const [restNow, setRestNow] = useState(() => Date.now());
+  // Local-only UI state for the manual duration-preset picker — never persisted, never derived
+  // from any exercise/workout/plan data.
+  const [restPickerOpen, setRestPickerOpen] = useState(false);
   const [feedback, setFeedback] = useState<{ exerciseId: string; unit: number } | null>(null);
   const [menuResult, setMenuResult] = useState<ActualExerciseResult | null>(null);
   const [editor, setEditor] = useState<'note' | 'prescription' | 'add' | 'replace' | null>(null);
@@ -427,27 +453,24 @@ export default function WorkoutScreen() {
     ],
   );
 
-  // Makes the athlete's real prescribed rest immediately available after a rep/set, but never
-  // starts counting down on its own — the athlete has to tap Start. Also guarantees a single rest
-  // timer can ever exist: if one is already showing (from a previous rep), a newly completed rep
-  // doesn't silently reset or replace the athlete's in-progress rest.
-  const beginRest = (exercise: PlannedExercise, next: string) => {
+  // Manual, athlete-initiated only — never called from rep/set/exercise completion. Refuses to
+  // create a second timer while one is already active, so only one can ever run at once.
+  const startRest = (seconds: number) => {
     if (session?.restTimer) return;
-    const tracking = exercise.tracking;
-    const seconds = tracking.kind === 'track' || tracking.kind === 'strength'
-      ? tracking.restSeconds
-      : undefined;
-    if (seconds) updateSession(current => ({ ...current, restTimer: createRestTimer(seconds, next) }));
+    hapticTimerToggle();
+    updateSession(current => ({ ...current, restTimer: startRestTimer(createRestTimer(seconds, '')) }));
+    setRestPickerOpen(false);
   };
 
-  const markTrackRep = (result: ActualExerciseResult, exercise: PlannedExercise, repNumber: number) => {
+  // The rest timer is entirely athlete-initiated (see restPickerOpen / startRest below) — marking
+  // a rep or set complete never touches it. This also guarantees a single rest timer can ever
+  // exist: startRest() itself refuses to create a second one while one is already active.
+  const markTrackRep = (result: ActualExerciseResult, repNumber: number) => {
     const rep = result.trackReps?.find(item => item.repNumber === repNumber);
     const nextStatus: ResultStatus = rep?.status === 'completed' ? 'pending' : 'completed';
     if (nextStatus === 'completed') {
       hapticComplete();
       setFeedback({ exerciseId: result.exerciseId, unit: repNumber });
-      const next = result.trackReps?.find(item => item.repNumber > repNumber && item.status === 'pending');
-      beginRest(exercise, next ? `Rep ${next.repNumber}` : 'Next exercise');
     }
     updateResult(result.exerciseId, current => ({
       ...current,
@@ -456,14 +479,10 @@ export default function WorkoutScreen() {
     }));
   };
 
-  const markStrengthSet = (result: ActualExerciseResult, exercise: PlannedExercise, setNumber: number) => {
+  const markStrengthSet = (result: ActualExerciseResult, setNumber: number) => {
     const set = result.strengthSets?.find(item => item.setNumber === setNumber);
     const nextStatus: ResultStatus = set?.status === 'completed' ? 'pending' : 'completed';
-    if (nextStatus === 'completed') {
-      hapticComplete();
-      const next = result.strengthSets?.find(item => item.setNumber > setNumber && item.status === 'pending');
-      beginRest(exercise, next ? `Set ${next.setNumber}` : 'Next exercise');
-    }
+    if (nextStatus === 'completed') hapticComplete();
     updateResult(result.exerciseId, current => {
       const first = current.strengthSets?.[0];
       return {
@@ -811,7 +830,7 @@ export default function WorkoutScreen() {
                         ...current,
                         trackReps: current.trackReps?.map(item => item.repNumber === rep.repNumber ? { ...item, timeSeconds } : item),
                       }))} /></View>
-                      <DoneControl status={rep.status} label={`Mark rep ${rep.repNumber} complete`} onPress={() => markTrackRep(result, exercise, rep.repNumber)} />
+                      <DoneControl status={rep.status} label={`Mark rep ${rep.repNumber} complete`} onPress={() => markTrackRep(result, rep.repNumber)} />
                     </View>
                     {feedback?.exerciseId === result.exerciseId && feedback.unit === rep.repNumber ? <View style={styles.feedbackRow}>
                       <Text style={styles.feedbackLabel}>How did it feel?</Text>
@@ -848,7 +867,7 @@ export default function WorkoutScreen() {
                         return item;
                       }),
                     }))} /></View>
-                    <DoneControl status={set.status} label={`Mark set ${set.setNumber} complete`} onPress={() => markStrengthSet(result, exercise, set.setNumber)} />
+                    <DoneControl status={set.status} label={`Mark set ${set.setNumber} complete`} onPress={() => markStrengthSet(result, set.setNumber)} />
                   </View>)}
                 </> : null}
 
@@ -889,7 +908,15 @@ export default function WorkoutScreen() {
             tap();
             updateSession(current => ({ ...current, restTimer: null }));
           }}
-        /> : null}
+        /> : restPickerOpen ? <RestPresetPicker
+          palette={palette}
+          styles={styles}
+          onPick={startRest}
+          onCancel={() => { tap(); setRestPickerOpen(false); }}
+        /> : <Pressable accessibilityRole="button" accessibilityLabel="Open rest timer" onPress={() => { tap(); setRestPickerOpen(true); }} style={styles.restOpenButton}>
+          <MaterialIcons name="timer" size={16} color={palette.accent} />
+          <Text style={styles.restOpenButtonText}>Rest timer</Text>
+        </Pressable>}
         <PrimaryButton title={bottomTitle} onPress={bottomAction} disabled={bottomDisabled} />
         {totalProgress.resolved !== totalProgress.total ? <Pressable accessibilityRole="button" onPress={endWorkoutEarly} style={styles.endEarlyLink}>
           <Text style={styles.endEarlyLinkText}>End workout early</Text>
@@ -1045,6 +1072,11 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   restTextControlLabel: { color: palette.accent, fontSize: 12, fontWeight: '900' },
   restPrimaryButton: { minHeight: 38, borderRadius: 11, backgroundColor: palette.accent, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center' },
   restPrimaryButtonText: { color: '#080D12', fontSize: 13, fontWeight: '900' },
+  restPresetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
+  restPresetChip: { minHeight: 38, paddingHorizontal: 14, borderRadius: 11, backgroundColor: palette.surface2, borderWidth: 1, borderColor: palette.border, alignItems: 'center', justifyContent: 'center' },
+  restPresetChipText: { color: palette.text, fontSize: 13, fontWeight: '800' },
+  restOpenButton: { minHeight: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  restOpenButtonText: { color: palette.accent, fontSize: 13, fontWeight: '800' },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.68)', justifyContent: 'flex-end' },
   menuSheet: { backgroundColor: palette.surface, borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 16, paddingBottom: 30, gap: 4, width: '100%', maxWidth: 820, alignSelf: 'center' },
   sheetHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: palette.border, alignSelf: 'center', marginBottom: 9 },

@@ -11,9 +11,9 @@ import { getLibraryWorkouts } from '@/utils/workout-library';
 // existing plan-change-validator.ts/plan-change-apply.ts and coach.ts/coach-resolve.ts splits.
 
 /** Gathers the athlete's current live data from storage and builds the AI context in one call —
- * the single place both the Coach overlay (components/coach-context.tsx) and the I-2 dev/test
- * surface (app/coach-dev.tsx) get athlete context from, so there is one source of truth for
- * "how SprintLab assembles what Gemini sees about this athlete" rather than two. */
+ * the single place the Coach overlay (components/coach-context.tsx) gets athlete context from,
+ * so there is one source of truth for "how SprintLab assembles what Gemini sees about this
+ * athlete." */
 export async function buildCurrentAthleteAIContext(now = new Date()): Promise<AthleteAIContext | null> {
   const today = toLocalDateKey(now);
   const [profile, schedule, scheduleHistory, sessions, logs, readiness, libraryWorkouts] = await Promise.all([

@@ -56,7 +56,6 @@ export function evaluatePrehab(context: PrehabContext): PrehabEvaluation {
   const readiness = context.readiness;
   const restricted = Boolean(context.medicalRestrictions?.trim());
   const sharpOrSevere = readiness?.sensation === 'severe-acute'
-    || readiness?.painSeverity !== undefined && readiness.painSeverity >= 7
     || readiness?.hesitatesAtMaxEffort === true
     || readiness?.readinessLevel === 'red';
 

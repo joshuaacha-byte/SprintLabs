@@ -29,6 +29,7 @@ import { libraryWorkoutToPlannedWorkout } from '@/utils/plan-selector';
 import { getScheduledDay, getTrainingLogs, saveDayWorkout } from '@/utils/storage';
 import { workoutToPlannedSnapshot } from '@/utils/training-history';
 import { getLibraryWorkouts, isRecommendationEligible } from '@/utils/workout-library';
+import { disciplineForCategory, LIBRARY_DISCIPLINES, type LibraryDiscipline } from '@/utils/library-taxonomy';
 import { inferTracking } from '@/utils/workout-session';
 import { prepareWorkoutLaunch } from '@/utils/workout-launch';
 import { completeStep, error, selection, success, tap, warning } from '@/utils/haptics';
@@ -108,6 +109,8 @@ export default function WorkoutBuilderScreen() {
   const [picker, setPicker] = useState<'section' | 'library' | 'recent' | null>(null);
   const [libraryWorkouts, setLibraryWorkouts] = useState<LibraryWorkout[]>([]);
   const [recentLogs, setRecentLogs] = useState<TrainingLog[]>([]);
+  const [activeDiscipline, setActiveDiscipline] = useState<LibraryDiscipline | null>(null);
+  const [librarySearch, setLibrarySearch] = useState('');
 
   useFocusEffect(useCallback(() => {
     if (unplanned) {
@@ -131,6 +134,27 @@ export default function WorkoutBuilderScreen() {
       setRecentLogs([...logs].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 12));
     });
   }, [unplanned]);
+
+  const libraryDisciplineCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of libraryWorkouts) {
+      const discipline = disciplineForCategory(item.primaryCategory);
+      counts.set(discipline.id, (counts.get(discipline.id) ?? 0) + 1);
+    }
+    return counts;
+  }, [libraryWorkouts]);
+  const libraryDisciplineWorkouts = useMemo(
+    () => activeDiscipline ? libraryWorkouts.filter(item => disciplineForCategory(item.primaryCategory).id === activeDiscipline.id) : [],
+    [activeDiscipline, libraryWorkouts],
+  );
+  const librarySearchResults = useMemo(() => {
+    const query = librarySearch.trim().toLowerCase();
+    if (!query) return [];
+    return libraryWorkouts.filter(item => item.name.toLowerCase().includes(query) || item.purpose.toLowerCase().includes(query));
+  }, [librarySearch, libraryWorkouts]);
+  const openLibraryPicker = () => { tap(); setActiveDiscipline(null); setLibrarySearch(''); setPicker('library'); };
+  const openLibraryDiscipline = (discipline: LibraryDiscipline) => { tap(); setActiveDiscipline(discipline); };
+  const backToLibraryCategories = () => { tap(); setActiveDiscipline(null); setLibrarySearch(''); };
 
   const calculatedDuration = useMemo(() => calculateWorkoutMinutes(workout), [workout]);
   useEffect(() => {
@@ -313,7 +337,7 @@ export default function WorkoutBuilderScreen() {
         <ScreenTitle subtitle="Build or import today’s session without changing your weekly plan.">One-off workout</ScreenTitle>
 
         <View style={styles.sourceActions}>
-          <SourceAction icon="menu-book" title="Add from workout library" copy="Choose a complete SprintLab session." onPress={() => { tap(); setPicker('library'); }} styles={styles} palette={palette} />
+          <SourceAction icon="menu-book" title="Add from workout library" copy="Choose a complete SprintLab session." onPress={openLibraryPicker} styles={styles} palette={palette} />
           <SourceAction icon="history" title="Copy a recent workout" copy="Reuse and edit a session from History." onPress={() => { tap(); setPicker('recent'); }} styles={styles} palette={palette} />
           <SourceAction icon="edit" title="Build from scratch" copy="Add only the training you’re doing today." selected={!totalExercises} onPress={buildFromScratch} styles={styles} palette={palette} />
         </View>
@@ -347,10 +371,30 @@ export default function WorkoutBuilderScreen() {
       </View>
     </View>
 
-    <SelectionModal visible={picker !== null} title={picker === 'section' ? 'Add workout section' : picker === 'library' ? 'Workout library' : 'Recent workouts'} onClose={() => { tap(); setPicker(null); }} styles={styles} palette={palette}>
+    <SelectionModal
+      visible={picker !== null}
+      title={picker === 'section' ? 'Add workout section' : picker === 'library' ? (activeDiscipline ? activeDiscipline.label : librarySearch.trim() ? 'Search results' : 'Workout library') : 'Recent workouts'}
+      onBack={picker === 'library' && (activeDiscipline || librarySearch.trim()) ? backToLibraryCategories : undefined}
+      onClose={() => { tap(); setPicker(null); }}
+      styles={styles}
+      palette={palette}
+    >
       {picker === 'section' ? sectionOptions.filter(title => !visibleSections.includes(title)).map(title => <PickerRow key={title} icon={sectionIconName(title)} title={title} onPress={() => addSection(title)} styles={styles} palette={palette} />) : null}
-      {picker === 'library' ? libraryWorkouts.map(item => <PickerRow key={item.id} icon="menu-book" title={item.name} copy={`${item.primaryCategory.replaceAll('-', ' ')} · ${item.metrics.estimatedDurationMinutes[0]}–${item.metrics.estimatedDurationMinutes[1]} min`} onPress={() => importWorkout(libraryWorkoutToPlannedWorkout(item))} styles={styles} palette={palette} />) : null}
-      {picker === 'library' && !libraryWorkouts.length ? <Text style={styles.modalEmpty}>No approved library workouts are available.</Text> : null}
+
+      {picker === 'library' ? <LibraryPicker
+        workouts={libraryWorkouts}
+        activeDiscipline={activeDiscipline}
+        disciplineCounts={libraryDisciplineCounts}
+        disciplineWorkouts={libraryDisciplineWorkouts}
+        search={librarySearch}
+        setSearch={setLibrarySearch}
+        searchResults={librarySearchResults}
+        openDiscipline={openLibraryDiscipline}
+        onPick={item => importWorkout(libraryWorkoutToPlannedWorkout(item))}
+        styles={styles}
+        palette={palette}
+      /> : null}
+
       {picker === 'recent' ? recentLogs.map(log => <PickerRow key={log.id} icon="history" title={log.plannedWorkout.name} copy={new Date(`${log.date.slice(0, 10)}T12:00:00`).toLocaleDateString()} onPress={() => importWorkout(workoutToPlannedSnapshot(log))} styles={styles} palette={palette} />) : null}
       {picker === 'recent' && !recentLogs.length ? <Text style={styles.modalEmpty}>Completed workouts will appear here after they are saved to History.</Text> : null}
     </SelectionModal>
@@ -465,22 +509,92 @@ function WorkoutSectionCard({ section, adding, setAdding, name, setName, detail,
   </Card>;
 }
 
-function SelectionModal({ visible, title, onClose, children, styles, palette }: React.PropsWithChildren<{
+function SelectionModal({ visible, title, onBack, onClose, children, styles, palette }: React.PropsWithChildren<{
   visible: boolean;
   title: string;
+  onBack?: () => void;
   onClose: () => void;
   styles: ReturnType<typeof createStyles>;
   palette: Palette;
 }>) {
-  return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+  return <Modal visible={visible} transparent animationType="slide" onRequestClose={onBack ?? onClose}>
     <View style={styles.modalBackdrop}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
       <SafeAreaView style={styles.modalSheet}>
-        <View style={styles.modalHead}><Text style={styles.modalTitle}>{title}</Text><Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={onClose} style={styles.iconButton}><MaterialIcons name="close" size={21} color={palette.text} /></Pressable></View>
+        <View style={styles.modalHead}>
+          <View style={styles.modalHeadStart}>
+            {onBack ? <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={onBack} style={styles.iconButton}><MaterialIcons name="arrow-back" size={20} color={palette.text} /></Pressable> : null}
+            <Text style={styles.modalTitle}>{title}</Text>
+          </View>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={onClose} style={styles.iconButton}><MaterialIcons name="close" size={21} color={palette.text} /></Pressable>
+        </View>
         <ScrollView contentContainerStyle={styles.modalContent}>{children}</ScrollView>
       </SafeAreaView>
     </View>
   </Modal>;
+}
+
+const libraryWorkoutExerciseCount = (item: LibraryWorkout) =>
+  Object.values(item.sections).reduce((total, section) => total + section.items.length, 0);
+
+const libraryWorkoutMetaLine = (item: LibraryWorkout) => {
+  const duration = item.metrics.estimatedDurationMinutes;
+  const durationText = duration[0] === duration[1] ? `${duration[0]} min` : `${duration[0]}–${duration[1]} min`;
+  const level = item.athleteLevels[0] ? item.athleteLevels[0].replace(/^\w/, letter => letter.toUpperCase()) : null;
+  const exercises = libraryWorkoutExerciseCount(item);
+  const equipment = item.equipmentRequired.length ? item.equipmentRequired.slice(0, 2).join(', ') + (item.equipmentRequired.length > 2 ? '…' : '') : 'No special equipment';
+  return [durationText, level, `${exercises} exercise${exercises === 1 ? '' : 's'}`, equipment].filter(Boolean).join(' · ');
+};
+
+function LibraryPicker({ workouts, activeDiscipline, disciplineCounts, disciplineWorkouts, search, setSearch, searchResults, openDiscipline, onPick, styles, palette }: {
+  workouts: LibraryWorkout[];
+  activeDiscipline: LibraryDiscipline | null;
+  disciplineCounts: Map<string, number>;
+  disciplineWorkouts: LibraryWorkout[];
+  search: string;
+  setSearch: (value: string) => void;
+  searchResults: LibraryWorkout[];
+  openDiscipline: (discipline: LibraryDiscipline) => void;
+  onPick: (item: LibraryWorkout) => void;
+  styles: ReturnType<typeof createStyles>;
+  palette: Palette;
+}) {
+  if (!workouts.length) return <Text style={styles.modalEmpty}>No approved library workouts are available.</Text>;
+
+  const searching = Boolean(search.trim());
+
+  return <View style={{ gap: 10 }}>
+    {!activeDiscipline ? <View style={styles.librarySearchRow}>
+      <MaterialIcons name="search" size={18} color={palette.muted} />
+      <TextInput value={search} onChangeText={setSearch} placeholder="Search workouts by name" placeholderTextColor={palette.muted} style={styles.librarySearchInput} />
+      {search ? <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => setSearch('')}><MaterialIcons name="close" size={18} color={palette.muted} /></Pressable> : null}
+    </View> : null}
+
+    {searching ? <>
+      {searchResults.map(item => <LibraryWorkoutRow key={item.id} item={item} onPress={() => onPick(item)} styles={styles} palette={palette} />)}
+      {!searchResults.length ? <Text style={styles.modalEmpty}>No workouts match &quot;{search.trim()}&quot;.</Text> : null}
+    </> : activeDiscipline ? <>
+      {disciplineWorkouts.map(item => <LibraryWorkoutRow key={item.id} item={item} onPress={() => onPick(item)} styles={styles} palette={palette} />)}
+      {!disciplineWorkouts.length ? <Text style={styles.modalEmpty}>No approved sessions in {activeDiscipline.label} yet.</Text> : null}
+    </> : <View style={styles.libraryDisciplineGrid}>
+      {LIBRARY_DISCIPLINES.map(discipline => <Pressable key={discipline.id} onPress={() => openDiscipline(discipline)} style={styles.libraryDisciplineTile}>
+        <View style={styles.disciplineIcon}><MaterialIcons name={discipline.icon as keyof typeof MaterialIcons.glyphMap} size={20} color={palette.accent} /></View>
+        <Text style={styles.disciplineLabel}>{discipline.label}</Text>
+        <Text style={styles.disciplineCount}>{disciplineCounts.get(discipline.id) ?? 0} session{(disciplineCounts.get(discipline.id) ?? 0) === 1 ? '' : 's'}</Text>
+      </Pressable>)}
+    </View>}
+  </View>;
+}
+
+function LibraryWorkoutRow({ item, onPress, styles, palette }: { item: LibraryWorkout; onPress: () => void; styles: ReturnType<typeof createStyles>; palette: Palette }) {
+  return <Pressable accessibilityRole="button" onPress={onPress} style={styles.pickerRow}>
+    <View style={styles.sourceIcon}><MaterialIcons name="menu-book" size={19} color={palette.accent} /></View>
+    <View style={{ flex: 1 }}>
+      <Text style={styles.pickerTitle}>{item.name}</Text>
+      <Text style={styles.pickerCopy} numberOfLines={2}>{libraryWorkoutMetaLine(item)}</Text>
+    </View>
+    <MaterialIcons name="chevron-right" size={20} color={palette.muted} />
+  </Pressable>;
 }
 
 function PickerRow({ icon, title, copy, onPress, styles, palette }: {
@@ -556,10 +670,18 @@ const createStyles = (palette: Palette) => StyleSheet.create({
   modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,.62)' },
   modalSheet: { maxHeight: '78%', backgroundColor: palette.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: palette.border },
   modalHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingTop: 16, paddingBottom: 8 },
+  modalHeadStart: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
   modalTitle: { color: palette.text, fontSize: 20, fontWeight: '900' },
   modalContent: { padding: 14, paddingBottom: 28, gap: 8 },
   pickerRow: { minHeight: 62, borderRadius: 14, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface2, paddingHorizontal: 11, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 10 },
   pickerTitle: { color: palette.text, fontSize: 13, fontWeight: '900' },
-  pickerCopy: { color: palette.muted, fontSize: 10, lineHeight: 14, marginTop: 2, textTransform: 'capitalize' },
+  pickerCopy: { color: palette.muted, fontSize: 10, lineHeight: 14, marginTop: 2 },
   modalEmpty: { color: palette.muted, fontSize: 12, lineHeight: 18, textAlign: 'center', padding: 24 },
+  librarySearchRow: { minHeight: 46, borderRadius: 13, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface2, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, marginBottom: 2 },
+  librarySearchInput: { flex: 1, minHeight: 44, color: palette.text, fontSize: 13 },
+  libraryDisciplineGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 },
+  libraryDisciplineTile: { flexBasis: '47%', flexGrow: 1, minHeight: 98, borderRadius: 14, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface2, padding: 12, gap: 7 },
+  disciplineIcon: { width: 32, height: 32, borderRadius: 9, backgroundColor: palette.accentDark, alignItems: 'center', justifyContent: 'center' },
+  disciplineLabel: { color: palette.text, fontSize: 12, fontWeight: '900' },
+  disciplineCount: { color: palette.muted, fontSize: 10, fontWeight: '700' },
 });
