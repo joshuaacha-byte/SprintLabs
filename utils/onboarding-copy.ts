@@ -68,5 +68,8 @@ export function classificationExplanation(profile: AthleteProfile) {
     'logging-only': 'training-log',
   } as const;
   const pathway = pathwayNames[sportPathway(profile)];
-  return `Your ${pathway} pathway uses your goals, schedule, and training context to shape your starting week.`;
+  // MVP: the starting week is generated from event/pathway, schedule, and training experience —
+  // not from the priorities collected above. Priorities are saved and shown to Coach so they can
+  // factor in future adjustments; this copy must not claim they restructure the starting week.
+  return `Your ${pathway} pathway uses your event, schedule, and training experience to shape your starting week. Your priorities are saved for Coach and future plan adjustments.`;
 }

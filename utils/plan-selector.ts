@@ -26,6 +26,19 @@ import {
 } from '@/utils/weekly-architecture';
 import { isRecommendationEligible } from '@/utils/workout-library';
 
+/**
+ * MVP scope: phase-specific periodization (specific-preparation/pre-competition/competition/
+ * taper/transition role sets and workout-phase gating) is intentionally NOT active yet. Every
+ * deterministic plan is generated against this single, broadly-supported phase so a real season
+ * phase — or a missing one — can never block generation (see PLAN_ENGINE_QA_REPORT.md, Critical
+ * #2). The athlete's actual derived season phase (utils/season-engine.ts) is still computed and
+ * stored for Coach context, meet-proximity safety narrowing, and future phase-aware
+ * periodization; it is just not used as a workout-eligibility gate here. The phase-specific
+ * functions in utils/weekly-architecture.ts remain intact, unused by this MVP path, for that
+ * future work — do not delete them.
+ */
+export const MVP_GENERATION_PHASE: LibrarySeasonPhase = 'general-preparation';
+
 export type SuggestedAlternative = {
   workoutId: string;
   name: string;
@@ -668,6 +681,41 @@ function generalSpeedRoles(
   return [acceleration, lowTechnical, upright, support, integration];
 }
 
+/**
+ * Deterministic strength-record preference order for a paired strength day — replaces a flat
+ * STR-01/STR-02 alternation. Depends only on the athlete's library level and which purpose-slot
+ * of the week this pairing fills; deliberately does NOT depend on onboarding equipment answers
+ * (gym-equipment availability does not customize the base plan — see PLAN_ENGINE_QA_REPORT.md),
+ * random rotation, or day-index parity for its own sake.
+ *
+ * `purposeSlot` is the 0-based ordinal of paired-strength occurrences so far this week, not a
+ * raw day index. The active MVP architecture (utils/weekly-architecture.ts's generalPreparation,
+ * and generalSpeedRoles() in this file) always places exactly two paired-strength sessions per
+ * week, in a fixed order: the first is always the acceleration/force-purpose sprint session, the
+ * second is always the maximum-velocity/explosive-purpose one. This holds for every sport, event,
+ * and day-count the MVP produces, so purposeSlot 0/1 reliably identifies the sprint session's
+ * purpose rather than an arbitrary position.
+ *
+ * - Foundation/developing: STR-01 (force-oriented) / STR-02 (explosive) — the two records whose
+ *   own authored `intendedAthlete` copy describes them as the complete foundational pair for
+ *   every experience level; this tier generally favors that simpler foundational template.
+ * - Trained/advanced: STR-04 (posterior-chain) / STR-05 (unilateral) as the primary, more
+ *   specialized choice for each purpose — appropriate once an athlete has progressed past the
+ *   foundational template — with STR-01/STR-02 kept as a genuine fallback (never actually needed
+ *   today, since STR-04/05 are always eligible, but preserved so a future level/phase gate can't
+ *   silently produce an unpaired day).
+ * STR-03 stays last in every list: an approved, always-eligible safety net, never the default —
+ * it only becomes a possible pick if the earlier preferred records ever become ineligible or
+ * already used, never because of the athlete's equipment answers.
+ */
+function strengthPreferenceOrder(level: LibraryAthleteLevel, purposeSlot: number): string[] {
+  const isForcePurpose = purposeSlot === 0;
+  if (level === 'foundation' || level === 'developing') {
+    return isForcePurpose ? ['STR-01', 'STR-04', 'STR-03'] : ['STR-02', 'STR-05', 'STR-03'];
+  }
+  return isForcePurpose ? ['STR-04', 'STR-01', 'STR-03'] : ['STR-05', 'STR-02', 'STR-03'];
+}
+
 function firstEligibleById(
   workouts: LibraryWorkout[],
   ids: string[],
@@ -677,8 +725,9 @@ function firstEligibleById(
 ) {
   const surfaces = availableSurfaces(profile);
   const level = selectionLevel ?? profileLevel(profile.experienceLevel);
-  if (season.phase === 'needs-calendar') return undefined;
-  const phase = season.phase;
+  // MVP: eligibility always uses MVP_GENERATION_PHASE — see that constant's doc comment. A
+  // missing calendar (season.phase === 'needs-calendar') no longer blocks selection.
+  const phase = MVP_GENERATION_PHASE;
   const ordered = ids
     .map(id => workouts.find(workout => workout.id === id))
     .filter((workout): workout is LibraryWorkout => Boolean(workout));
@@ -702,25 +751,25 @@ function buildGeneralSpeedWeek(
   days: WeekdayIndex[],
   season: ReturnType<typeof deriveSeasonPhase>,
 ): WeeklyPlanSuggestion {
-  if (season.phase === 'needs-calendar') {
-    return {
-      status: 'no-match',
-      title: 'Complete your training calendar',
-      message: 'SprintLab needs the current training context before matching a week.',
-      reasons: [season.explanation],
-    };
-  }
-  const phase = season.phase;
+  // MVP: workout-phase eligibility always uses MVP_GENERATION_PHASE, never the athlete's derived
+  // `season.phase` (see the constant's doc comment) — so a missing calendar, or a real phase like
+  // taper/pre-competition/transition, can never block generation. `season` is still threaded
+  // through for meet-proximity safety narrowing and the summary/warning copy below.
+  const phase = MVP_GENERATION_PHASE;
   const sport = profile.primarySport ?? profile.sport ?? 'general-athletic-performance';
   const football = sport === 'football';
   const level = profileLevel(profile.experienceLevel);
   const tierSelection = adjustedGeneralSpeedTier(profile, phase, level);
   const surfaces = availableSurfaces(profile);
   const limitedLinearSpace = false;
-  const roles = generalSpeedRoles(days.length, football, phase === 'competition', level, tierSelection.tier, limitedLinearSpace);
+  // inSeason periodization is one of the disabled phase-dependent behaviors for this MVP (it
+  // would need GEN-MICRO-01-style 'competition'-only records, which are unreachable now that
+  // eligibility is pinned to MVP_GENERATION_PHASE) — always false until phase periodization returns.
+  const roles = generalSpeedRoles(days.length, football, false, level, tierSelection.tier, limitedLinearSpace);
   const suggestions: SuggestedPlanDay[] = [];
   const failures: string[] = [];
   const used = new Set<string>();
+  let strengthPairingsSoFar = 0;
 
   roles.forEach((role, index) => {
     const dayIndex = days[index];
@@ -756,9 +805,8 @@ function buildGeneralSpeedWeek(
 
     let strength: LibraryWorkout | undefined;
     if (role.pairStrength) {
-      const strengthIds = index % 2 === 0
-        ? ['STR-01', 'STR-02']
-        : ['STR-02', 'STR-01'];
+      const strengthIds = strengthPreferenceOrder(level, strengthPairingsSoFar);
+      strengthPairingsSoFar += 1;
       strength = firstEligibleById(workouts, strengthIds.filter(id => id !== primary?.id && !used.has(id)), profile, season);
     }
     const plannedWorkout = pairPlannedWorkouts(primary, strength);
@@ -860,15 +908,11 @@ export function buildDeterministicWeeklyPlan(
       reasons: ['You can keep editing the weekly schedule manually.', 'Workout execution, History, and Progress remain available.'],
     };
   }
+  // MVP: `season` (the athlete's real derived season phase, or 'needs-calendar' if no calendar
+  // has been entered yet) is still computed and threaded through for meet-proximity safety
+  // narrowing and summary copy below, but it is never a hard gate on generation — see
+  // MVP_GENERATION_PHASE's doc comment.
   const season = deriveSeasonPhase(profile);
-  if (season.phase === 'needs-calendar') {
-    return {
-      status: 'no-match',
-      title: 'Complete your competition calendar',
-      message: 'SprintLab will not guess your season phase.',
-      reasons: [season.explanation],
-    };
-  }
 
   const days = selectedDays(profile);
   if (!days.length) {
@@ -888,7 +932,7 @@ export function buildDeterministicWeeklyPlan(
     event: profileEvent(profile),
     pathway: profilePathway(profile),
     level: profileLevel(profile.experienceLevel),
-    phase: season.phase,
+    phase: MVP_GENERATION_PHASE,
     surfaces: availableSurfaces(profile),
     profile,
     season,
@@ -902,6 +946,7 @@ export function buildDeterministicWeeklyPlan(
   const usedIds = new Set<string>();
   const suggestions: SuggestedPlanDay[] = [];
   const failures: string[] = [];
+  let strengthPairingsSoFar = 0;
 
   days.forEach((dayIndex, index) => {
     const slot = architecture[index];
@@ -914,9 +959,8 @@ export function buildDeterministicWeeklyPlan(
     }
     let support: LibraryWorkout | undefined;
     if (slot.pairStrength) {
-      const preferredStrengthIds = index % 2 === 0
-        ? ['STR-01', 'STR-02']
-        : ['STR-02', 'STR-01'];
+      const preferredStrengthIds = strengthPreferenceOrder(context.level, strengthPairingsSoFar);
+      strengthPairingsSoFar += 1;
       const supportSlot: WeeklyArchitectureSlot = {
         id: `${slot.id}-support`,
         label: 'Paired strength',

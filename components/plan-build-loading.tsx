@@ -127,7 +127,7 @@ function planBuildChecklist(profile: AthleteProfile): string[] {
     events || planBuildPathwayLabel(profile),
     hasBaseline ? 'Current performance mapped' : 'Starting point set',
     profile.trainingDaysPerWeek ? `${profile.trainingDaysPerWeek} training day${profile.trainingDaysPerWeek === 1 ? '' : 's'} available` : 'Training availability set',
-    goalCount ? 'Goals calibrated' : 'Primary goal set',
+    goalCount ? 'Priorities saved' : 'Primary goal set',
     protectedLabel ?? 'Speed priorities identified',
     'Weekly load balanced',
   ];

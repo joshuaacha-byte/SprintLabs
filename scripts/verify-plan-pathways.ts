@@ -6,7 +6,7 @@ import {
   sampleSoccerAthleteProfile,
   sampleTrainingLog,
 } from '../data/domain-samples.ts';
-import type { AthleteProfile } from '../types/index.ts';
+import type { AthleteProfile, TrainingDay } from '../types/index.ts';
 import { plannedWorkoutToDomainWorkout } from '../utils/domain-adapters.ts';
 import { buildDeterministicWeeklyPlan, type SuggestedPlanDay } from '../utils/plan-selector.ts';
 import { workoutToPlannedSnapshot } from '../utils/training-history.ts';
@@ -146,8 +146,8 @@ const trainedShortTrack = plan({
 assert(trainedShortTrack.suggestions.length === 5, 'Trained 100/200 pathway must fill five selected training days.');
 assert(highCount(trainedShortTrack.suggestions) === 3, 'Trained 100/200 five-day pathway must use three quality exposures.');
 assert(
-  trainedShortTrack.suggestions.flatMap(day => day.supportWorkoutIds).filter(id => ['STR-01', 'STR-02'].includes(id)).length >= 2,
-  'Trained 100/200 plans must contain two complete loaded-strength pairings.',
+  trainedShortTrack.suggestions.flatMap(day => day.supportWorkoutIds).filter(id => ['STR-01', 'STR-02', 'STR-04', 'STR-05'].includes(id)).length >= 2,
+  'Trained 100/200 plans must contain two complete loaded-strength pairings (STR-01/02/04/05 are all valid for a trained athlete).',
 );
 
 const longTrack = plan({
@@ -166,8 +166,8 @@ const longTrack = plan({
 assert(highCount(longTrack.suggestions) === 3, 'Trained five-day 200/400 general preparation must use three quality days.');
 assert(longTrack.suggestions.some(day => day.targetCategory === 'speed-endurance'), '200/400 general preparation must contain controlled speed endurance.');
 assert(
-  longTrack.suggestions.flatMap(day => day.supportWorkoutIds).filter(id => ['STR-01', 'STR-02'].includes(id)).length >= 2,
-  'Trained 200/400 plans must contain two complete loaded-strength pairings.',
+  longTrack.suggestions.flatMap(day => day.supportWorkoutIds).filter(id => ['STR-01', 'STR-02', 'STR-04', 'STR-05'].includes(id)).length >= 2,
+  'Trained 200/400 plans must contain two complete loaded-strength pairings (STR-01/02/04/05 are all valid for a trained athlete).',
 );
 
 const football = plan({
@@ -188,7 +188,7 @@ assert(football.suggestions.some(day => day.workoutId === 'F40-MAX-02'), 'Traine
 assert(football.suggestions.some(day => day.workoutId === 'F40-TRANSFER-01'), 'Football pathway must use the dedicated 20-40-yard transfer record.');
 assert(highCount(football.suggestions) === 3, 'Trained five-day football pathway must contain three separated quality exposures.');
 assert(football.suggestions.reduce((count, day) => count + day.supportWorkoutIds.length, 0) === 2, 'Football general preparation must pair two strength exposures, not add a third lifting day.');
-assert(football.suggestions.flatMap(day => day.supportWorkoutIds).every(id => ['STR-01', 'STR-02'].includes(id)), 'Football strength must use the same complete force and explosive templates.');
+assert(football.suggestions.flatMap(day => day.supportWorkoutIds).every(id => ['STR-01', 'STR-02', 'STR-04', 'STR-05'].includes(id)), 'Football strength must use one of the complete loaded-strength templates (STR-01/02/04/05 are all valid for a trained athlete).');
 
 const foundationFootball = plan({
   ...sampleFootballAthleteProfile,
@@ -285,22 +285,29 @@ assert(
   'A stale court-only profile must no longer be locked out of upright-speed development.',
 );
 
-const inSeason = plan({
+// MVP: season-phase periodization is intentionally disabled (see MVP_GENERATION_PHASE in
+// utils/plan-selector.ts) — a competition-phase override must produce the exact same plan as
+// general-preparation, not the old reduced in-season microdose. This proves phase is genuinely
+// not a hard eligibility/volume gate any more, per PLAN_ENGINE_QA_REPORT.md's Critical #2 fix.
+const footballBaseProfile = {
   ...sampleFootballAthleteProfile,
-  id: 'verify-football-in-season',
-  primarySport: 'football',
-  sports: ['football'],
-  experienceLevel: 'intermediate',
+  primarySport: 'football' as const,
+  sports: ['football' as const],
+  experienceLevel: 'intermediate' as const,
   trainingDaysPerWeek: 4,
-  availableTrainingDays: ['monday', 'tuesday', 'thursday', 'friday'],
-  preferredRestDay: 'sunday',
+  availableTrainingDays: ['monday', 'tuesday', 'thursday', 'friday'] as TrainingDay[],
+  preferredRestDay: 'sunday' as const,
   sportPracticeDays: [],
   gameOrCompetitionDays: [],
-  seasonPhaseOverride: override('competition'),
-});
-assert(inSeason.suggestions.length <= 3, 'In-season general path must not fill every available day with extra SprintLab work.');
-assert(inSeason.suggestions.some(day => day.workoutId === 'GEN-MICRO-01'), 'In-season path must use the reviewed speed microdose.');
-assert(highCount(inSeason.suggestions) === 0, 'In-season fallback must not label a full high-output day.');
+};
+const inSeason = plan({ ...footballBaseProfile, id: 'verify-football-in-season', seasonPhaseOverride: override('competition') });
+const generalPrepEquivalent = plan({ ...footballBaseProfile, id: 'verify-football-general-prep-equivalent', seasonPhaseOverride: override('general-preparation') });
+assert(inSeason.suggestions.length === 4, 'A competition-phase override must not reduce the scheduled day count for the MVP — phase periodization is disabled.');
+assert(
+  inSeason.suggestions.map(day => day.workoutId).join('|') === generalPrepEquivalent.suggestions.map(day => day.workoutId).join('|'),
+  'A competition-phase override must select the identical workouts to a general-preparation override — phase must never change MVP generation.',
+);
+assert(highCount(inSeason.suggestions) === 2, 'The disabled-periodization MVP path must use the standard four-day high/low mix regardless of season phase.');
 
 const footballWithTeamLoad = plan({
   ...sampleFootballAthleteProfile,

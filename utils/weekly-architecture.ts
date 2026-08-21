@@ -25,7 +25,14 @@ type ArchitectureInput = {
   sessionCount: number;
 };
 
-const isLongSprint = (event: EventTag) => event === '400m';
+// Matches utils/plan-selector.ts's profilePathway(): 200m and 400m both belong to the
+// 'long-sprint-200-400' pathway there (only 60m/100m are 'short-sprint-100-200'). This must stay
+// consistent with that classification — a 200m athlete's preferred-workout selection here should
+// use the same long-sprint branch as the eligibility filtering already gives them, not the
+// short-sprint branch. (Not imported directly to avoid a circular import between the two files;
+// keep the event sets in sync by hand, and see scripts/verify-plan-engine-audit-regressions.ts
+// for a regression test that catches drift.)
+const isLongSprintPathwayEvent = (event: EventTag) => event === '200m' || event === '400m';
 
 function high(
   id: string,
@@ -88,7 +95,7 @@ function moderate(
 }
 
 function generalPreparation(input: ArchitectureInput) {
-  const long = isLongSprint(input.event);
+  const long = isLongSprintPathwayEvent(input.event);
   const base: WeeklyArchitectureSlot[] = [
     high(
       'acceleration-strength',
@@ -147,7 +154,7 @@ function generalPreparation(input: ArchitectureInput) {
 }
 
 function specificPreparation(input: ArchitectureInput) {
-  const long = isLongSprint(input.event);
+  const long = isLongSprintPathwayEvent(input.event);
   return [
     high(
       'acceleration-strength',
@@ -183,7 +190,7 @@ function specificPreparation(input: ArchitectureInput) {
 }
 
 function preCompetition(input: ArchitectureInput) {
-  const long = isLongSprint(input.event);
+  const long = isLongSprintPathwayEvent(input.event);
   return [
     high('starts-strength', 'Starts / acceleration + strength', 'starts', 'Sharpen the first phase of the race and keep strength consolidated on a high day.', ['STA-02', 'STA-01', 'ACC-03'], ['acceleration'], true),
     low('tempo-capacity', 'Tempo / recovery', 'Protect recovery between race-quality sessions.', ['TEM-03', 'TEM-01']),
